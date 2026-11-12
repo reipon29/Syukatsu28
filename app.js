@@ -1,10 +1,10 @@
 'use strict';
 
-const APP_VERSION = '1.5.1';
+const APP_VERSION = '2.0.0';
 const STORAGE_KEY = 'syukatsu.v1';
 
 const STATUSES = [
-  { id: 'interest',  label: '興味あり',     cls: 's-pre' },
+  { id: 'interest',  label: '興味あり',     cls: 'g-pre' },
   { id: 'entry',     label: 'エントリー済', cls: '' },
   { id: 'es',        label: 'ES・書類選考', cls: '' },
   { id: 'test',      label: 'Webテスト',    cls: '' },
@@ -12,11 +12,12 @@ const STATUSES = [
   { id: 'int1',      label: '一次面接',     cls: '' },
   { id: 'int2',      label: '二次面接',     cls: '' },
   { id: 'intf',      label: '最終面接',     cls: '' },
-  { id: 'offer',     label: '内定',         cls: 's-offer' },
-  { id: 'declined',  label: '辞退',         cls: 's-end' },
-  { id: 'rejected',  label: 'お見送り',     cls: 's-end' },
+  { id: 'offer',     label: '内定',         cls: 'g-offer' },
+  { id: 'declined',  label: '辞退',         cls: 'g-end' },
+  { id: 'rejected',  label: 'お見送り',     cls: 'g-end' },
 ];
 const STATUS_MAP = Object.fromEntries(STATUSES.map(s => [s.id, s]));
+const IN_PROCESS = new Set(['entry', 'es', 'test', 'gd', 'int1', 'int2', 'intf']);
 const ACTIVE_STATUSES = new Set(STATUSES.filter(s => !['declined', 'rejected'].includes(s.id)).map(s => s.id));
 
 const TOKYO = {
@@ -93,12 +94,21 @@ function normalizeCompany(c) {
     pwd: normalizePwd(c.pwd),
     postings,
     memo: str(c.memo),
+    history: (Array.isArray(c.history) ? c.history : [])
+      .filter(h => h && STATUS_MAP[h.status]).map(h => ({ status: h.status, at: Number(h.at) || Date.now() })),
+    notes: (Array.isArray(c.notes) ? c.notes : []).filter(n => n && (n.q || n.a)).map(normalizeNote),
     events: (Array.isArray(c.events) ? c.events : [])
       .filter(ev => ev && ev.title && /^\d{4}-\d{2}-\d{2}$/.test(ev.date))
       .map(normalizeEvent),
     createdAt: Number(c.createdAt) || Date.now(),
     updatedAt: Number(c.updatedAt) || Date.now(),
   };
+}
+function normalizeNote(n) {
+  return { id: str(n.id) || uid(), kind: ['es', 'interview', 'other'].includes(n.kind) ? n.kind : 'es', q: str(n.q), a: str(n.a), memo: str(n.memo), at: Number(n.at) || Date.now() };
+}
+function normalizeStock(x) {
+  return { id: str(x.id) || uid(), title: str(x.title), text: str(x.text), updatedAt: Number(x.updatedAt) || Date.now() };
 }
 function normalizeAccount(a) {
   return {
@@ -115,14 +125,15 @@ function normalizeState(d) {
   const ids = new Set(accounts.map(a => a.id));
   const companies = (Array.isArray(d.companies) ? d.companies : []).filter(c => c && typeof c.name === 'string').map(normalizeCompany);
   companies.forEach(c => { if (c.route && c.route !== 'own' && !ids.has(c.route)) c.route = ''; });
+  const stock = (Array.isArray(d.stock) ? d.stock : []).filter(x => x && (x.title || x.text)).map(normalizeStock);
   const v = d.vault;
   const hasCipher = [...companies, ...accounts].some(x => isCipher(x.pwd));
   if (hasCipher && v && typeof v.salt === 'string' && isCipher(v.check)) {
-    return { companies, accounts, vault: { salt: v.salt, check: v.check } };
+    return { companies, accounts, stock, vault: { salt: v.salt, check: v.check } };
   }
   // 鍵情報がない暗号データは復元できないので破棄
   [...companies, ...accounts].forEach(x => { if (isCipher(x.pwd)) x.pwd = ''; });
-  return { companies, accounts };
+  return { companies, accounts, stock };
 }
 
 let state = load();
@@ -131,7 +142,7 @@ function load() {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) return normalizeState(JSON.parse(raw));
   } catch (e) { console.error(e); }
-  return { companies: [], accounts: [] };
+  return { companies: [], accounts: [], stock: [] };
 }
 function save() {
   try {
@@ -170,6 +181,12 @@ function relLabel(dateStr) {
   return `${-n}日前`;
 }
 const evKey = e => e.date + (e.time || '99');
+const charCount = t => [...(t || '').replace(/\r?\n/g, '')].length;
+const findCompany = id => state.companies.find(c => c.id === id);
+function fmtDay(ts) {
+  const d = new Date(ts);
+  return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}`;
+}
 function nextEvent(c) {
   const today = todayStr();
   return c.events.filter(e => !e.done && e.date >= today).sort((a, b) => evKey(a).localeCompare(evKey(b)))[0];
@@ -318,18 +335,29 @@ vForm.addEventListener('submit', async e => {
 document.addEventListener('visibilitychange', () => { if (!document.hidden) render(); });
 
 /* ---------- navigation ---------- */
-const TITLES = { companies: '企業一覧', schedule: '予定', compare: '比較', login: 'ログイン情報', settings: '設定' };
-let currentView = 'companies';
+const TITLES = { home: 'ホーム', companies: '企業', schedule: '予定', compare: '比較', more: 'その他', login: 'ログイン情報', es: 'ESストック' };
+const SUB_VIEWS = { login: 'more', es: 'more' }; // 「その他」の中の画面
+let currentView = 'home';
 function showView(name) {
   currentView = name;
   $$('.view').forEach(v => v.classList.toggle('active', v.id === 'view-' + name));
-  $$('.tabbar button').forEach(b => b.classList.toggle('active', b.dataset.view === name));
+  const tab = SUB_VIEWS[name] || name;
+  $$('.tabbar button').forEach(b => b.classList.toggle('active', b.dataset.view === tab));
   $('#page-title').textContent = TITLES[name];
-  $('#fab').hidden = name !== 'companies';
+  $('#back-btn').hidden = !SUB_VIEWS[name];
+  $('#fab').hidden = !['home', 'companies', 'es'].includes(name);
+  const now = new Date();
+  $('#topbar-sub').textContent = name === 'home' ? `${now.getMonth() + 1}月${now.getDate()}日(${WD[now.getDay()]})` : '';
   render();
   window.scrollTo(0, 0);
 }
 $$('.tabbar button').forEach(b => b.addEventListener('click', () => showView(b.dataset.view)));
+$('#back-btn').addEventListener('click', () => showView(SUB_VIEWS[currentView] || 'home'));
+document.addEventListener('click', e => {
+  const g = e.target.closest('[data-goto]');
+  if (g) { showView(g.dataset.goto); return; }
+  if (e.target.closest('[data-add-company]')) openCompany(null);
+});
 
 /* ---------- filters ---------- */
 const filterSel = $('#filter-status');
@@ -388,11 +416,9 @@ $('#show-done').addEventListener('change', render);
 
 /* ---------- render ---------- */
 function render() {
-  if (currentView === 'companies') renderCompanies();
-  else if (currentView === 'schedule') renderSchedule();
-  else if (currentView === 'compare') renderCompare();
-  else if (currentView === 'login') renderLogin();
-  else if (currentView === 'settings') renderSettings();
+  const fn = { home: renderHome, companies: renderCompanies, schedule: renderSchedule, compare: renderCompare,
+    login: renderLogin, more: renderMore, es: renderStock }[currentView];
+  fn?.();
 }
 
 function matchTokyo(c, f) { return matchTokyoCode(bestTokyo(c), f); }
@@ -423,10 +449,13 @@ function renderCompanies() {
   state.companies.forEach(c => { counts[c.status] = (counts[c.status] || 0) + 1; });
   const activeCount = state.companies.filter(c => ACTIVE_STATUSES.has(c.status)).length;
   $('#summary').innerHTML =
-    `<button data-f="active" class="${f === 'active' ? 'on' : ''}">選考中 ${activeCount}</button>` +
-    `<button data-f="all" class="${f === 'all' ? 'on' : ''}">すべて ${state.companies.length}</button>` +
+    `<button data-f="active" class="${f === 'active' ? 'on' : ''}">進行中<b>${activeCount}</b></button>` +
+    `<button data-f="all" class="${f === 'all' ? 'on' : ''}">すべて<b>${state.companies.length}</b></button>` +
     STATUSES.filter(s => counts[s.id]).map(s =>
-      `<button data-f="${s.id}" class="${f === s.id ? 'on' : ''}">${s.label} ${counts[s.id]}</button>`).join('');
+      `<button data-f="${s.id}" class="${f === s.id ? 'on' : ''}">${s.label}<b>${counts[s.id]}</b></button>`).join('');
+  const nFilters = [ft !== 'all', fi !== 'all', fr !== 'all'].filter(Boolean).length;
+  $('#filter-count').hidden = !nFilters;
+  $('#filter-count').textContent = nFilters;
 
   const list = state.companies.filter(c => {
     if (f === 'active' && !ACTIVE_STATUSES.has(c.status)) return false;
@@ -454,10 +483,10 @@ function renderCompanies() {
     if (ne) {
       const n = daysFromToday(ne.date);
       const cls = n === 0 ? 'today' : n <= 3 ? 'soon' : '';
-      nextHtml = `<div class="card-next ${cls}">📌 ${esc(ne.title)}・${fmtDate(ne.date)}${ne.time ? ' ' + ne.time : ''}（${relLabel(ne.date)}）</div>`;
+      nextHtml = `<div class="card-next ${cls}">${esc(ne.title)}・${fmtDate(ne.date)}${ne.time ? ' ' + ne.time : ''}（${relLabel(ne.date)}）</div>`;
     }
     const rn = routeName(c);
-    return `<li class="card" data-id="${c.id}">
+    return `<li class="card ${st.cls}" data-id="${c.id}">
       <div class="card-top">
         <span class="card-name">${esc(c.name)}</span>
         ${tokyoBadge(c)}
@@ -466,7 +495,6 @@ function renderCompanies() {
       <div class="card-sub">
         <span class="stars-view">${stars(c.priority)}</span>
         ${c.industry ? `<span>${esc(c.industry)}</span>` : ''}
-        ${c.hq ? `<span>本社: ${esc(c.hq)}</span>` : ''}
         ${rn ? `<span>経路: ${esc(rn)}</span>` : ''}
         ${appliedText(c)}
       </div>
@@ -480,6 +508,7 @@ function renderCompanies() {
   }
 }
 
+$('#filter-toggle').addEventListener('click', () => { $('#filter-panel').hidden = !$('#filter-panel').hidden; });
 $('#summary').addEventListener('click', e => {
   const b = e.target.closest('button[data-f]');
   if (!b) return;
@@ -489,7 +518,7 @@ $('#summary').addEventListener('click', e => {
 });
 $('#company-list').addEventListener('click', e => {
   const li = e.target.closest('.card');
-  if (li) openCompany(li.dataset.id);
+  if (li) openDetail(li.dataset.id);
 });
 
 function renderSchedule() {
@@ -538,9 +567,10 @@ $('#schedule-list').addEventListener('change', e => {
   save();
   setTimeout(render, 250);
 });
+$('#ics-btn').addEventListener('click', exportIcs);
 $('#schedule-list').addEventListener('click', e => {
   const m = e.target.closest('.sched-main');
-  if (m) openCompany(m.dataset.cid);
+  if (m) openDetail(m.dataset.cid);
 });
 
 /* ---------- 比較 ---------- */
@@ -620,11 +650,11 @@ function renderCompare() {
 }
 $('#cmp-chart').addEventListener('click', e => {
   const r = e.target.closest('.bar-row');
-  if (r) openCompany(r.dataset.id, r.dataset.pid);
+  if (r) openDetail(r.dataset.id, r.dataset.pid);
 });
 $('#cmp-table').addEventListener('click', e => {
   const r = e.target.closest('tr[data-id]');
-  if (r) openCompany(r.dataset.id, r.dataset.pid);
+  if (r) openDetail(r.dataset.id, r.dataset.pid);
 });
 
 /* ---------- ログイン ---------- */
@@ -639,11 +669,11 @@ function renderLogin() {
     const url = safeUrl(a.url);
     return `<div class="login-card">
       <div class="lc-top"><span class="lc-name" data-edit-account="${a.id}">${esc(a.name)}</span>
-        <button class="link" data-edit-account="${a.id}">編集</button></div>
+        <button class="link small" data-edit-account="${a.id}">編集</button></div>
       ${a.loginId ? `<div class="lc-sub">ID: ${esc(a.loginId)}</div>` : ''}
       ${a.memo ? `<div class="lc-sub">${esc(a.memo)}</div>` : ''}
-      <div class="lc-actions">
-        ${url ? `<a href="${esc(url)}" target="_blank" rel="noopener">開く ↗</a>` : ''}
+      <div class="actions">
+        ${url ? `<a class="primary" href="${esc(url)}" target="_blank" rel="noopener">開く ↗</a>` : ''}
         <button data-copy-id="a:${a.id}">IDコピー</button>
         <button data-copy-pw="a:${a.id}">PWコピー${a.pwd ? '' : '（未登録）'}</button>
       </div>
@@ -663,8 +693,8 @@ function renderLogin() {
       <div class="lc-top"><span class="lc-name" data-open-company="${c.id}">${esc(c.name)}</span>
         <span class="chip ${STATUS_MAP[c.status].cls}">${STATUS_MAP[c.status].label}</span></div>
       <div class="lc-sub">経路: ${rn ? esc(rn) : '未設定'}${c.loginId ? `　/　マイページID: ${esc(c.loginId)}` : ''}</div>
-      <div class="lc-actions">
-        ${url ? `<a href="${esc(url)}" target="_blank" rel="noopener">マイページ ↗</a>` : ''}
+      <div class="actions">
+        ${url ? `<a class="primary" href="${esc(url)}" target="_blank" rel="noopener">マイページ ↗</a>` : ''}
         ${c.loginId ? `<button data-copy-id="c:${c.id}">IDコピー</button>` : ''}
         ${c.pwd ? `<button data-copy-pw="c:${c.id}">PWコピー</button>` : ''}
         ${acc && safeUrl(acc.url) ? `<a href="${esc(acc.url)}" target="_blank" rel="noopener">${esc(acc.name)} ↗</a>` : ''}
@@ -680,14 +710,14 @@ $('#view-login').addEventListener('click', e => {
   const t = e.target.closest('[data-edit-account],[data-copy-id],[data-copy-pw],[data-open-company]');
   if (!t) return;
   if (t.dataset.editAccount) openAccount(t.dataset.editAccount);
-  else if (t.dataset.openCompany) openCompany(t.dataset.openCompany);
+  else if (t.dataset.openCompany) openDetail(t.dataset.openCompany);
   else if (t.dataset.copyId) copyText(itemFromRef(t.dataset.copyId)?.loginId, 'ID');
   else if (t.dataset.copyPw) copyPassword(itemFromRef(t.dataset.copyPw)?.pwd);
 });
 $('#add-account').addEventListener('click', () => openAccount(null));
 
-/* ---------- 設定 ---------- */
-function renderSettings() {
+/* ---------- その他 ---------- */
+function renderMore() {
   $('#version').textContent = 'バージョン ' + APP_VERSION;
 }
 
@@ -758,7 +788,7 @@ cForm.url.addEventListener('input', updateOpenUrl);
 function openCompany(id, postingId) {
   const src = id ? state.companies.find(c => c.id === id) : null;
   editing = src ? structuredClone(src) : normalizeCompany({ name: '', createdAt: Date.now() });
-  $('#company-dialog-title').textContent = src ? '企業の詳細' : '企業を追加';
+  $('#company-dialog-title').textContent = src ? '企業を編集' : '企業を追加';
   ['name', 'status', 'hq', 'locations', 'tokyo', 'url', 'loginId', 'memo'].forEach(k => { cForm[k].value = editing[k]; });
   setIndustry(editing.industry);
   if (!editing.postings.length) editing.postings.push(normalizePosting());
@@ -771,36 +801,10 @@ function openCompany(id, postingId) {
   updateOpenUrl();
   updateTokyoHint();
   $('#delete-company').hidden = !src;
-
-
-  renderEvents();
   cDialog.showModal();
   cDialog.querySelector('.dialog-body').scrollTop = 0;
   if (!src) setTimeout(() => cForm.name.focus(), 50);
 }
-
-function renderEvents() {
-  const evs = [...editing.events].sort((a, b) => evKey(a).localeCompare(evKey(b)));
-  $('#event-list').innerHTML = evs.length ? evs.map(ev => `
-    <li class="event-item ${ev.done ? 'done' : ''}">
-      <input type="checkbox" data-eid="${ev.id}" ${ev.done ? 'checked' : ''} aria-label="完了">
-      <div class="ev-main" data-eid="${ev.id}">
-        <div class="ev-title">${esc(ev.title)}</div>
-        <div class="ev-date">${fmtDate(ev.date, true)}${ev.time ? ' ' + ev.time : ''}${ev.place ? '・' + esc(ev.place) : ''}</div>
-      </div>
-      <a class="gcal" href="${esc(gcalUrl(ev, cForm.name.value || editing.name))}" target="_blank" rel="noopener">カレンダー</a>
-    </li>`).join('') : '<li class="event-empty">予定はまだありません</li>';
-}
-$('#event-list').addEventListener('change', e => {
-  const cb = e.target.closest('input[type=checkbox]');
-  const ev = cb && editing.events.find(x => x.id === cb.dataset.eid);
-  if (ev) { ev.done = cb.checked; renderEvents(); }
-});
-$('#event-list').addEventListener('click', e => {
-  const m = e.target.closest('.ev-main');
-  if (m) openEvent(m.dataset.eid);
-});
-$('#add-event').addEventListener('click', () => openEvent(null));
 
 /* ---------- 業界の選択・推定 ---------- */
 function setIndustry(name) {
@@ -962,11 +966,15 @@ cForm.addEventListener('submit', async e => {
   editing.updatedAt = Date.now();
   editing.postings = editing.postings.filter(postingHasData);
   const idx = state.companies.findIndex(c => c.id === editing.id);
+  // ステータスが変わったら選考履歴に記録
+  const prev = idx >= 0 ? state.companies[idx].status : null;
+  if (prev !== editing.status) editing.history.push({ status: editing.status, at: Date.now() });
   if (idx >= 0) state.companies[idx] = editing; else state.companies.push(editing);
   save();
   cDialog.close();
   toast('保存しました');
   render();
+  openDetail(editing.id);
 });
 
 function hasUnsavedChanges() {
@@ -979,6 +987,7 @@ function hasUnsavedChanges() {
 function tryCloseCompany() {
   if (hasUnsavedChanges() && !confirm('変更が保存されていません。破棄して閉じますか？')) return;
   cDialog.close();
+  if (findCompany(editing.id)) openDetail(editing.id); // 詳細から開いた場合は詳細に戻る
 }
 cDialog.querySelector('[data-close]').addEventListener('click', tryCloseCompany);
 cDialog.addEventListener('cancel', e => { e.preventDefault(); tryCloseCompany(); });
@@ -1200,11 +1209,12 @@ $('#paste-clipboard').addEventListener('click', async () => {
 /* ---------- event dialog ---------- */
 const eDialog = $('#event-dialog');
 const eForm = $('#event-form');
-let editingEventId = null;
+let evCtx = null; // { cid, eid }
 
-function openEvent(eid) {
-  editingEventId = eid;
-  const ev = eid ? editing.events.find(x => x.id === eid) : null;
+function openEvent(cid, eid) {
+  evCtx = { cid, eid };
+  const ev = eid ? findCompany(cid)?.events.find(x => x.id === eid) : null;
+  $('#event-dialog-title').textContent = ev ? '予定・締切を編集' : '予定・締切を追加';
   eForm.title.value = ev?.title || '';
   eForm.date.value = ev?.date || todayStr();
   eForm.time.value = ev?.time || '';
@@ -1214,25 +1224,46 @@ function openEvent(eid) {
   eDialog.showModal();
   if (!ev) setTimeout(() => eForm.title.focus(), 50);
 }
+function afterChange() {
+  save();
+  render();
+  if (dDialog.open) renderDetail();
+}
 eForm.addEventListener('submit', e => {
   e.preventDefault();
+  const c = findCompany(evCtx.cid);
+  if (!c) return;
   const data = {
     title: eForm.title.value.trim(), date: eForm.date.value, time: eForm.time.value,
     place: eForm.place.value.trim(), done: eForm.done.checked,
   };
   if (!data.title || !data.date) return;
-  if (editingEventId) Object.assign(editing.events.find(x => x.id === editingEventId), data);
-  else editing.events.push({ id: uid(), ...data });
+  const ev = evCtx.eid && c.events.find(x => x.id === evCtx.eid);
+  if (ev) Object.assign(ev, data);
+  else c.events.push({ id: uid(), ...data });
+  c.updatedAt = Date.now();
   eDialog.close();
-  renderEvents();
+  afterChange();
+  toast('予定を保存しました');
 });
 eDialog.querySelector('[data-close]').addEventListener('click', () => eDialog.close());
 $('#delete-event').addEventListener('click', () => {
-  if (!confirm('この予定を削除しますか？')) return;
-  editing.events = editing.events.filter(x => x.id !== editingEventId);
+  const c = findCompany(evCtx.cid);
+  if (!c || !confirm('この予定を削除しますか？')) return;
+  c.events = c.events.filter(x => x.id !== evCtx.eid);
   eDialog.close();
-  renderEvents();
+  afterChange();
 });
+function toggleEventDone(cid, eid, done) {
+  const c = findCompany(cid);
+  const ev = c?.events.find(x => x.id === eid);
+  if (!ev) return;
+  ev.done = done;
+  c.updatedAt = Date.now();
+  save();
+  if (dDialog.open) renderDetail();
+  setTimeout(render, 250);
+}
 
 /* ---------- account dialog ---------- */
 const aDialog = $('#account-dialog');
@@ -1284,7 +1315,7 @@ $('#delete-account').addEventListener('click', () => {
 });
 
 /* ---------- FAB ---------- */
-$('#fab').addEventListener('click', () => openCompany(null));
+$('#fab').addEventListener('click', () => (currentView === 'es' ? openStock(null) : openCompany(null)));
 
 /* ---------- backup ---------- */
 $('#export-btn').addEventListener('click', () => {
@@ -1320,14 +1351,415 @@ $('#import-file').addEventListener('change', async e => {
 $('#clear-btn').addEventListener('click', () => {
   if (!confirm('すべてのデータを削除します。元に戻せません。よろしいですか？')) return;
   if (!confirm('本当に削除しますか？（事前にバックアップの書き出しをおすすめします）')) return;
-  state = { companies: [], accounts: [] };
+  state = { companies: [], accounts: [], stock: [] };
   save();
   toast('削除しました');
   render();
 });
 
+/* ---------- 企業の詳細（閲覧） ---------- */
+const dDialog = $('#detail-dialog');
+let detailId = null;
+const POSTING_TEXT_LABELS = [
+  ['recruiter', '募集者'], ['job', '募集職種'], ['eligibility', '応募資格'], ['startDate', '入社時期'],
+  ['contract', '契約・雇用形態'], ['probation', '試用期間'], ['hours', '勤務時間'], ['holidaysNote', '休日・休暇'],
+  ['salaryNote', '初任給の詳細'], ['bonusNote', '賞与'], ['raise', '昇給'], ['benefits', '福利厚生'],
+  ['allowances', '諸手当'], ['commute', '通勤費'], ['note', 'その他'],
+];
+const NOTE_KIND = { es: 'ES', interview: '面接', other: 'その他' };
+
+function openDetail(id, postingId) {
+  if (!findCompany(id)) return;
+  detailId = id;
+  renderDetail();
+  if (!dDialog.open) dDialog.showModal();
+  const body = $('#detail-body');
+  body.scrollTop = 0;
+  if (postingId) {
+    const el = body.querySelector(`.pcard[data-pid="${postingId}"]`);
+    if (el) { el.scrollIntoView({ block: 'center' }); el.classList.add('flash'); }
+  }
+}
+function whenBox(date) {
+  const n = daysFromToday(date);
+  const cls = n === 0 ? 'today' : n < 0 ? 'overdue' : n <= 3 ? 'soon' : '';
+  const [, m, d] = date.split('-').map(Number);
+  return `<div class="when ${cls}"><b>${m}/${d}</b><small>${relLabel(date)}</small></div>`;
+}
+function loginActions(c) {
+  const acc = accountById(c.route);
+  const items = [];
+  if (safeUrl(c.url)) items.push(`<a class="primary" href="${esc(c.url)}" target="_blank" rel="noopener">マイページを開く ↗</a>`);
+  if (c.loginId) items.push(`<button data-act="copy-cid">IDコピー</button>`);
+  if (pwText(c.pwd)) items.push(`<button data-act="copy-cpw">PWコピー</button>`);
+  if (acc) {
+    if (safeUrl(acc.url)) items.push(`<a href="${esc(acc.url)}" target="_blank" rel="noopener">${esc(acc.name)} ↗</a>`);
+    if (acc.loginId) items.push(`<button data-act="copy-aid">${esc(acc.name)} ID</button>`);
+    if (pwText(acc.pwd)) items.push(`<button data-act="copy-apw">${esc(acc.name)} PW</button>`);
+  }
+  return items.length ? `<div class="actions">${items.join('')}</div>` : '';
+}
+function postingCard(c, p, i, multi) {
+  const tk = postingTokyo(c, p);
+  const title = p.title || (multi ? postingTitle(p, i) : '募集要項');
+  const metrics = METRICS.filter(m => m.key !== 'hiring' || p.hiring != null).map(m => {
+    const v = p[m.key];
+    return `<div class="metric ${v == null ? 'empty-m' : ''}"><div class="mv">${v == null ? '—' : esc(m.fmt(v))}</div><div class="ml">${m.label}</div></div>`;
+  }).join('');
+  const flags = POSTING_FLAGS.filter(f => p[f.key]).map(f => `<span class="tag">${f.label}</span>`).join('');
+  const rows = POSTING_TEXT_LABELS.filter(([k]) => p[k]).map(([k, l]) => `<dt>${l}</dt><dd>${esc(p[k])}</dd>`).join('');
+  return `<div class="pcard" data-pid="${p.id}">
+    <div class="pcard-top"><span class="pcard-title">${esc(title)}</span>${p.applied ? '<span class="applied-pill">応募</span>' : ''}${tokyoBadgeCode(tk)}</div>
+    ${p.location ? `<div class="note small">📍 ${esc(p.location)}</div>` : ''}
+    <div class="metric-grid">${metrics}</div>
+    ${flags ? `<div>${flags}</div>` : ''}
+    ${rows ? `<details><summary>募集要項の詳細を見る</summary><dl class="dl">${rows}</dl></details>` : ''}
+  </div>`;
+}
+function renderDetail() {
+  const c = findCompany(detailId);
+  if (!c) { dDialog.close(); return; }
+  const st = STATUS_MAP[c.status];
+  const ne = nextEvent(c);
+  let nextHtml = '';
+  if (ne) {
+    const n = daysFromToday(ne.date);
+    nextHtml = `<div class="next-box ${n === 0 ? 'today' : n <= 3 ? 'soon' : ''}" data-act="edit-event" data-eid="${ne.id}">
+      <div class="nb-main"><div class="nb-sub">次の予定</div><div class="nb-title">${esc(ne.title)}</div>
+      <div class="nb-sub">${fmtDate(ne.date)}${ne.time ? ' ' + ne.time : ''}（${relLabel(ne.date)}）${ne.place ? '・' + esc(ne.place) : ''}</div></div></div>`;
+  }
+  const rn = routeName(c);
+  const ps = c.postings.filter(postingHasData);
+  const evs = [...c.events].sort((a, b) => (a.done - b.done) || evKey(a).localeCompare(evKey(b)));
+  const tk = TOKYO[bestTokyo(c)];
+
+  $('#detail-body').innerHTML = `
+    <div class="hero">
+      <h1 class="hero-name">${esc(c.name)}</h1>
+      <div class="hero-meta">
+        <span class="stars-view">${stars(c.priority)}</span>
+        ${c.industry ? `<span>${esc(c.industry)}</span>` : '<span>業界未設定</span>'}
+        ${rn ? `<span>経路: ${esc(rn)}</span>` : ''}
+      </div>
+      <div class="hero-row">
+        <span class="status-picker ${st.cls}"><select id="detail-status" aria-label="ステータスを変更">
+          ${STATUSES.map(s => `<option value="${s.id}" ${s.id === c.status ? 'selected' : ''}>${s.label}</option>`).join('')}
+        </select></span>
+        ${tokyoBadge(c)}
+      </div>
+      ${loginActions(c)}
+      ${nextHtml}
+    </div>
+
+    <section class="dsec">
+      <div class="dsec-head"><h3>予定・締切</h3><button class="btn small" data-act="add-event">＋ 追加</button></div>
+      ${evs.length ? evs.map(ev => `
+        <div class="ev-row ${ev.done ? 'done' : ev.date < todayStr() ? 'overdue' : ''}">
+          <input type="checkbox" data-eid="${ev.id}" ${ev.done ? 'checked' : ''} aria-label="完了">
+          <div class="ev-main" data-act="edit-event" data-eid="${ev.id}">
+            <div class="ev-title">${esc(ev.title)}</div>
+            <div class="ev-date">${!ev.done && ev.date < todayStr() ? '期限切れ・' : ''}${fmtDate(ev.date, true)}${ev.time ? ' ' + ev.time : ''}${ev.place ? '・' + esc(ev.place) : ''}</div>
+          </div>
+          <a class="gcal" href="${esc(gcalUrl(ev, c.name))}" target="_blank" rel="noopener">Googleカレンダー</a>
+        </div>`).join('') : '<p class="muted-empty">予定・締切はまだありません。</p>'}
+    </section>
+
+    <section class="dsec">
+      <div class="dsec-head"><h3>職種・条件</h3>${ps.length > 1 ? `<span class="note small">${ps.length}職種</span>` : ''}</div>
+      ${ps.length ? ps.map((p, i) => postingCard(c, p, i, ps.length > 1)).join('')
+        : '<p class="muted-empty">まだ入力されていません。「編集」から募集要項を貼り付けると自動で入力されます。</p>'}
+    </section>
+
+    <section class="dsec">
+      <div class="dsec-head"><h3>勤務地</h3>${tk ? `<span class="note small">${tk.label}</span>` : ''}</div>
+      ${c.hq || c.locations ? `<dl class="dl">
+        ${c.hq ? `<dt>本社</dt><dd>${esc(c.hq)}</dd>` : ''}
+        ${c.locations ? `<dt>勤務地</dt><dd>${esc(c.locations)}</dd>` : ''}
+      </dl>` : '<p class="muted-empty">未入力</p>'}
+    </section>
+
+    <section class="dsec">
+      <div class="dsec-head"><h3>ES・面接メモ</h3><button class="btn small" data-act="add-note">＋ 追加</button></div>
+      ${c.notes.length ? [...c.notes].sort((a, b) => b.at - a.at).map(n => `
+        <div class="note-item" data-act="edit-note" data-nid="${n.id}">
+          <div class="ni-top"><span class="kind ${n.kind}">${NOTE_KIND[n.kind]}</span><span class="ni-q">${esc(n.q || '（設問なし）')}</span><span class="note small">${charCount(n.a)}字</span></div>
+          ${n.a ? `<div class="ni-a">${esc(n.a)}</div>` : ''}
+        </div>`).join('') : '<p class="muted-empty">提出したESの内容や、面接で聞かれた質問と答えを残しておくと、次の選考や他社の対策に使えます。</p>'}
+    </section>
+
+    ${c.memo ? `<section class="dsec"><div class="dsec-head"><h3>メモ</h3></div><div class="memo-text">${esc(c.memo)}</div></section>` : ''}
+
+    <section class="dsec">
+      <div class="dsec-head"><h3>選考履歴</h3></div>
+      <ul class="timeline">
+        ${[...c.history.map(h => ({ at: h.at, label: STATUS_MAP[h.status].label })), { at: c.createdAt, label: '登録' }]
+          .sort((a, b) => b.at - a.at).map(h => `<li><span class="tl-date">${fmtDay(h.at)}</span>${h.label}</li>`).join('')}
+      </ul>
+    </section>`;
+}
+function setStatus(c, status) {
+  if (c.status === status) return;
+  c.status = status;
+  c.history.push({ status, at: Date.now() });
+  c.updatedAt = Date.now();
+  afterChange();
+  toast(`ステータスを「${STATUS_MAP[status].label}」にしました`);
+}
+dDialog.querySelector('[data-close]').addEventListener('click', () => dDialog.close());
+$('#detail-edit').addEventListener('click', () => { dDialog.close(); openCompany(detailId); });
+$('#detail-body').addEventListener('change', e => {
+  const c = findCompany(detailId);
+  if (!c) return;
+  if (e.target.id === 'detail-status') setStatus(c, e.target.value);
+  else if (e.target.matches('input[type=checkbox][data-eid]')) toggleEventDone(c.id, e.target.dataset.eid, e.target.checked);
+});
+$('#detail-body').addEventListener('click', e => {
+  const t = e.target.closest('[data-act]');
+  const c = findCompany(detailId);
+  if (!t || !c) return;
+  const acc = accountById(c.route);
+  switch (t.dataset.act) {
+    case 'add-event': openEvent(c.id, null); break;
+    case 'edit-event': openEvent(c.id, t.dataset.eid); break;
+    case 'add-note': openNote(c.id, null); break;
+    case 'edit-note': openNote(c.id, t.dataset.nid); break;
+    case 'copy-cid': copyText(c.loginId, 'ID'); break;
+    case 'copy-cpw': copyPassword(c.pwd); break;
+    case 'copy-aid': copyText(acc?.loginId, 'ID'); break;
+    case 'copy-apw': copyPassword(acc?.pwd); break;
+  }
+});
+
+/* ---------- ES・面接メモ ---------- */
+const nDialog = $('#note-dialog');
+const nForm = $('#note-form');
+let noteCtx = null; // { cid, nid }
+function setNoteKind(k) {
+  nForm.dataset.kind = k;
+  $$('#note-kind button').forEach(b => b.classList.toggle('on', b.dataset.v === k));
+}
+function updateNoteCount() { $('#note-count').textContent = `${charCount(nForm.a.value)}字`; }
+function openNote(cid, nid) {
+  noteCtx = { cid, nid };
+  const n = nid ? findCompany(cid)?.notes.find(x => x.id === nid) : null;
+  setNoteKind(n?.kind || 'es');
+  nForm.q.value = n?.q || '';
+  nForm.a.value = n?.a || '';
+  nForm.memo.value = n?.memo || '';
+  updateNoteCount();
+  $('#delete-note').hidden = !n;
+  const stock = state.stock;
+  $('#note-stock').hidden = !stock.length;
+  $('#note-stock').innerHTML = stock.length ? 'ESストックから挿入: ' +
+    stock.map(x => `<button type="button" data-sid="${x.id}">${esc(x.title)}</button>`).join('') : '';
+  nDialog.showModal();
+  nDialog.querySelector('.dialog-body').scrollTop = 0;
+}
+$('#note-kind').addEventListener('click', e => { const b = e.target.closest('button'); if (b) setNoteKind(b.dataset.v); });
+nForm.a.addEventListener('input', updateNoteCount);
+$('#note-stock').addEventListener('click', e => {
+  const b = e.target.closest('button[data-sid]');
+  const x = b && state.stock.find(s => s.id === b.dataset.sid);
+  if (!x) return;
+  nForm.a.value = nForm.a.value.trim() ? nForm.a.value + '\n' + x.text : x.text;
+  if (!nForm.q.value.trim()) nForm.q.value = x.title;
+  updateNoteCount();
+});
+nForm.addEventListener('submit', e => {
+  e.preventDefault();
+  const c = findCompany(noteCtx.cid);
+  if (!c || !nForm.q.value.trim()) return;
+  const data = { kind: nForm.dataset.kind, q: nForm.q.value.trim(), a: nForm.a.value, memo: nForm.memo.value };
+  const n = noteCtx.nid && c.notes.find(x => x.id === noteCtx.nid);
+  if (n) Object.assign(n, data);
+  else c.notes.push(normalizeNote({ ...data, at: Date.now() }));
+  c.updatedAt = Date.now();
+  nDialog.close();
+  afterChange();
+  toast('メモを保存しました');
+});
+nDialog.querySelector('[data-close]').addEventListener('click', () => nDialog.close());
+$('#delete-note').addEventListener('click', () => {
+  const c = findCompany(noteCtx.cid);
+  if (!c || !confirm('このメモを削除しますか？')) return;
+  c.notes = c.notes.filter(x => x.id !== noteCtx.nid);
+  nDialog.close();
+  afterChange();
+});
+
+/* ---------- ESストック ---------- */
+const sDialog = $('#stock-dialog');
+const sForm = $('#stock-form');
+let stockId = null;
+function renderStock() {
+  const list = [...state.stock].sort((a, b) => b.updatedAt - a.updatedAt);
+  $('#stock-empty').hidden = list.length > 0;
+  $('#stock-list').innerHTML = list.map(x => `
+    <div class="stock-card" data-sid="${x.id}">
+      <div class="sc-top"><span class="sc-title" data-act="edit">${esc(x.title)}</span><span class="count">${charCount(x.text)}字</span></div>
+      <div class="sc-text" data-act="edit">${esc(x.text) || '（本文なし）'}</div>
+      <div class="actions"><button data-act="copy">本文をコピー</button><button data-act="edit">編集</button></div>
+    </div>`).join('');
+}
+$('#stock-list').addEventListener('click', e => {
+  const t = e.target.closest('[data-act]');
+  const card = e.target.closest('[data-sid]');
+  if (!t || !card) return;
+  const x = state.stock.find(s => s.id === card.dataset.sid);
+  if (t.dataset.act === 'copy') copyText(x?.text, '本文');
+  else openStock(card.dataset.sid);
+});
+function updateStockCount() { $('#stock-count').textContent = `${charCount(sForm.text.value)}字`; }
+function openStock(id) {
+  stockId = id;
+  const x = id ? state.stock.find(s => s.id === id) : null;
+  sForm.title.value = x?.title || '';
+  sForm.text.value = x?.text || '';
+  updateStockCount();
+  $('#delete-stock').hidden = !x;
+  sDialog.showModal();
+  if (!x) setTimeout(() => sForm.title.focus(), 50);
+}
+sForm.text.addEventListener('input', updateStockCount);
+sForm.addEventListener('submit', e => {
+  e.preventDefault();
+  if (!sForm.title.value.trim()) return;
+  const data = { title: sForm.title.value.trim(), text: sForm.text.value, updatedAt: Date.now() };
+  const x = stockId && state.stock.find(s => s.id === stockId);
+  if (x) Object.assign(x, data); else state.stock.push(normalizeStock(data));
+  save();
+  sDialog.close();
+  render();
+  toast('保存しました');
+});
+sDialog.querySelector('[data-close]').addEventListener('click', () => sDialog.close());
+$('#delete-stock').addEventListener('click', () => {
+  if (!confirm('この文章を削除しますか？')) return;
+  state.stock = state.stock.filter(s => s.id !== stockId);
+  save();
+  sDialog.close();
+  render();
+});
+
+/* ---------- ホーム ---------- */
+function renderHome() {
+  const cs = state.companies;
+  const empty = cs.length === 0;
+  $('#home-empty').hidden = !empty;
+  $$('#view-home > .panel, #home-stats').forEach(el => { el.hidden = empty; });
+  if (empty) return;
+
+  const today = todayStr();
+  const upcoming = [];
+  const overdue = [];
+  cs.forEach(c => c.events.forEach(ev => {
+    if (ev.done) return;
+    if (ev.date >= today) upcoming.push({ c, ev });
+    else if (daysFromToday(ev.date) >= -14) overdue.push({ c, ev });
+  }));
+  overdue.sort((a, b) => evKey(a.ev).localeCompare(evKey(b.ev)));
+  upcoming.sort((a, b) => evKey(a.ev).localeCompare(evKey(b.ev)));
+  const week = upcoming.filter(x => daysFromToday(x.ev.date) <= 7).length;
+  const count = f => cs.filter(f).length;
+  const stats = [
+    { v: count(c => IN_PROCESS.has(c.status)), u: '社', l: '選考中', go: 'active' },
+    { v: week, u: '件', l: '7日以内の予定', go: 'schedule' },
+    { v: count(c => c.status === 'offer'), u: '社', l: '内定', go: 'offer' },
+    { v: count(c => bestTokyo(c) === 'only' && ACTIVE_STATUSES.has(c.status)), u: '社', l: '東京◎', go: 'tokyo' },
+  ];
+  $('#home-stats').innerHTML = stats.map(s => `<button class="stat" data-stat="${s.go}"><div class="sv">${s.v}<small>${s.u}</small></div><div class="sl">${s.l}</div></button>`).join('');
+
+  const shown = [...overdue, ...upcoming.slice(0, 6)];
+  $('#home-events').innerHTML = shown.length ? `<div class="mini-list">${shown.map(({ c, ev }) => `
+    <div class="mini-item">
+      ${whenBox(ev.date)}
+      <div class="mi-main" data-open="${c.id}">
+        <div class="mi-title">${esc(ev.title)}</div>
+        <div class="mi-sub">${ev.date < today ? '<b class="overdue-text">期限切れ</b>・' : ''}${esc(c.name)}${ev.time ? '・' + ev.time : ''}${ev.place ? '・' + esc(ev.place) : ''}</div>
+      </div>
+      <input type="checkbox" data-cid="${c.id}" data-eid="${ev.id}" aria-label="完了">
+    </div>`).join('')}</div>` : '<p class="muted-empty">今後の予定はありません。企業の詳細画面から追加できます。</p>';
+
+  const todo = cs.filter(c => IN_PROCESS.has(c.status) && !nextEvent(c));
+  $('#home-todo-panel').hidden = !todo.length;
+  $('#home-todo').innerHTML = `<div class="mini-list">${todo.map(c => `
+    <div class="mini-item" data-open="${c.id}">
+      <div class="mi-main"><div class="mi-title">${esc(c.name)}</div><div class="mi-sub">${STATUS_MAP[c.status].label}</div></div>
+      <button class="btn small" data-add-event="${c.id}">＋ 予定</button>
+    </div>`).join('')}</div>`;
+
+  const counts = STATUSES.map(s => ({ s, n: count(c => c.status === s.id) })).filter(x => x.n);
+  const max = Math.max(...counts.map(x => x.n), 1);
+  $('#home-funnel').innerHTML = counts.map(({ s, n }) => `
+    <div class="funnel-row ${s.id === 'offer' ? 'offer' : ''}" data-status="${s.id}">
+      <span class="fl">${s.label}</span>
+      <div class="ft"><div class="ff" style="width:${(n / max) * 100}%"></div></div>
+      <span class="fv">${n}</span>
+    </div>`).join('');
+}
+$('#view-home').addEventListener('click', e => {
+  const add = e.target.closest('[data-add-event]');
+  if (add) { openEvent(add.dataset.addEvent, null); return; }
+  const open = e.target.closest('[data-open]');
+  if (open) { openDetail(open.dataset.open); return; }
+  const stat = e.target.closest('[data-stat]');
+  if (stat) {
+    const go = stat.dataset.stat;
+    if (go === 'schedule') { showView('schedule'); return; }
+    filterSel.value = go === 'tokyo' ? 'active' : go;
+    $('#filter-tokyo').value = go === 'tokyo' ? 'only' : 'all';
+    saveUiPref();
+    showView('companies');
+    return;
+  }
+  const row = e.target.closest('[data-status]');
+  if (row) { filterSel.value = row.dataset.status; saveUiPref(); showView('companies'); }
+});
+$('#view-home').addEventListener('change', e => {
+  const cb = e.target.closest('input[type=checkbox][data-eid]');
+  if (cb) { toggleEventDone(cb.dataset.cid, cb.dataset.eid, cb.checked); toast('完了にしました'); }
+});
+
+/* ---------- カレンダー書き出し（.ics） ---------- */
+function exportIcs() {
+  const icsText = t => String(t).replace(/\\/g, '\\\\').replace(/;/g, '\;').replace(/,/g, '\\,').replace(/\r?\n/g, '\\n');
+  const pad = n => String(n).padStart(2, '0');
+  const now = new Date();
+  const stamp = `${now.getUTCFullYear()}${pad(now.getUTCMonth() + 1)}${pad(now.getUTCDate())}T${pad(now.getUTCHours())}${pad(now.getUTCMinutes())}00Z`;
+  const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//syukatsu//JP', 'CALSCALE:GREGORIAN', 'X-WR-CALNAME:就活'];
+  let n = 0;
+  state.companies.forEach(c => c.events.forEach(ev => {
+    if (ev.done) return;
+    const d = ev.date.replace(/-/g, '');
+    lines.push('BEGIN:VEVENT', `UID:${ev.id}@syukatsu`, `DTSTAMP:${stamp}`, `SUMMARY:${icsText(`【${c.name}】${ev.title}`)}`);
+    if (ev.time) {
+      const [h, m] = ev.time.split(':').map(Number);
+      const endH = Math.min(h + 1, 23);
+      lines.push(`DTSTART:${d}T${pad(h)}${pad(m)}00`, `DTEND:${d}T${pad(endH)}${pad(h + 1 > 23 ? 59 : m)}00`);
+    } else {
+      const [y, mo, da] = ev.date.split('-').map(Number);
+      const nx = new Date(y, mo - 1, da + 1);
+      lines.push(`DTSTART;VALUE=DATE:${d}`, `DTEND;VALUE=DATE:${nx.getFullYear()}${pad(nx.getMonth() + 1)}${pad(nx.getDate())}`);
+    }
+    if (ev.place) lines.push(`LOCATION:${icsText(ev.place)}`);
+    lines.push('END:VEVENT');
+    n++;
+  }));
+  lines.push('END:VCALENDAR');
+  if (!n) { toast('書き出す予定がありません'); return; }
+  const blob = new Blob([lines.join('\r\n')], { type: 'text/calendar' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `syukatsu-${todayStr()}.ics`;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  toast(`${n}件の予定を書き出しました。ファイルを開くとカレンダーに追加できます`);
+}
+
 /* ---------- init ---------- */
-render();
+showView('home');
 migrateLegacy();
 
 if ('serviceWorker' in navigator) {

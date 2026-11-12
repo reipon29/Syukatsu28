@@ -5,7 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
   <title>就活管理</title>
   <meta name="description" content="就職活動の企業・選考状況・予定を管理するアプリ">
-  <meta name="theme-color" content="#2563eb">
+  <meta name="theme-color" content="#f5f6f8" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#101114" media="(prefers-color-scheme: dark)">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="就活管理">
@@ -15,57 +16,103 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
+  <!-- アイコン -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <symbol id="i-home" viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></symbol>
+    <symbol id="i-building" viewBox="0 0 24 24"><path d="M4 21V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v16M16 9h2a2 2 0 0 1 2 2v10M2 21h20M8 7h4M8 11h4M8 15h4"/></symbol>
+    <symbol id="i-calendar" viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="16.5" rx="2"/><path d="M3 9.5h18M8 2.5v4M16 2.5v4"/></symbol>
+    <symbol id="i-chart" viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></symbol>
+    <symbol id="i-menu" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol>
+    <symbol id="i-back" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></symbol>
+    <symbol id="i-filter" viewBox="0 0 24 24"><path d="M3 5h18M6 12h12M10 19h4"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-chev" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></symbol>
+  </svg>
+
   <header class="topbar">
-    <h1 id="page-title">企業一覧</h1>
+    <button id="back-btn" class="icon-btn" aria-label="戻る" hidden><svg><use href="#i-back"/></svg></button>
+    <h1 id="page-title">ホーム</h1>
+    <span id="topbar-sub" class="topbar-sub"></span>
   </header>
 
   <main>
+    <!-- ホーム -->
+    <section id="view-home" class="view active">
+      <div id="home-stats" class="stat-grid"></div>
+      <div class="panel">
+        <div class="panel-head"><h2>直近の予定・締切</h2><button class="link small" data-goto="schedule">すべて見る</button></div>
+        <div id="home-events"></div>
+      </div>
+      <div class="panel" id="home-todo-panel">
+        <div class="panel-head"><h2>次の予定が未登録の企業</h2></div>
+        <p class="note">選考中なのに予定・締切が入っていない企業です。忘れている締切がないか確認しましょう。</p>
+        <div id="home-todo"></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h2>選考状況</h2></div>
+        <div id="home-funnel" class="funnel"></div>
+      </div>
+      <div id="home-empty" class="empty-hero" hidden>
+        <p class="eh-title">就活管理へようこそ</p>
+        <p class="note">まずは気になる企業を登録しましょう。採用サイトの募集要項を貼り付けると、条件が自動で入力されます。</p>
+        <button class="btn primary" data-add-company>＋ 企業を追加</button>
+      </div>
+    </section>
+
     <!-- 企業一覧 -->
-    <section id="view-companies" class="view active">
-      <div class="toolbar">
-        <input id="search" type="search" placeholder="企業名・業界・勤務地・メモで検索">
-        <div class="toolbar-row">
-          <select id="filter-status" aria-label="ステータスで絞り込み"></select>
-          <select id="sort" aria-label="並び順">
+    <section id="view-companies" class="view">
+      <div class="search-row">
+        <input id="search" type="search" placeholder="企業名・業界・勤務地で検索">
+        <button id="filter-toggle" class="icon-btn boxed" aria-label="絞り込み"><svg><use href="#i-filter"/></svg><span id="filter-count" class="dot-count" hidden></span></button>
+      </div>
+      <div id="filter-panel" class="filter-panel" hidden>
+        <label>並び順
+          <select id="sort">
             <option value="next">次の予定が近い順</option>
             <option value="priority">志望度順</option>
             <option value="updated">更新が新しい順</option>
             <option value="name">企業名順</option>
           </select>
-          <select id="filter-tokyo" aria-label="東京勤務で絞り込み">
-            <option value="all">勤務地: すべて</option>
+        </label>
+        <label>東京勤務
+          <select id="filter-tokyo">
+            <option value="all">すべて</option>
             <option value="ok">東京◎・△のみ</option>
             <option value="only">東京◎のみ</option>
             <option value="notno">東京×を除く</option>
           </select>
-          <select id="filter-route" aria-label="エントリー経路で絞り込み"></select>
-          <select id="filter-industry" class="industry-filter" aria-label="業界で絞り込み"></select>
-        </div>
+        </label>
+        <label>業界<select id="filter-industry"></select></label>
+        <label>エントリー経路<select id="filter-route"></select></label>
+        <select id="filter-status" hidden></select>
       </div>
-      <div id="summary" class="summary"></div>
+      <div id="summary" class="seg-scroll"></div>
       <ul id="company-list" class="card-list"></ul>
       <p id="company-empty" class="empty" hidden>まだ企業が登録されていません。<br>右下の ＋ から追加しましょう。</p>
     </section>
 
     <!-- 予定 -->
     <section id="view-schedule" class="view">
-      <label class="check-inline"><input id="show-done" type="checkbox"> 完了・過去の予定も表示</label>
+      <div class="row-between">
+        <label class="check-inline"><input id="show-done" type="checkbox"> 完了・過去も表示</label>
+        <button id="ics-btn" class="btn small">カレンダーに書き出す</button>
+      </div>
       <div id="schedule-list"></div>
-      <p id="schedule-empty" class="empty" hidden>予定はありません。</p>
+      <p id="schedule-empty" class="empty" hidden>予定はありません。<br>企業の詳細画面から予定・締切を追加できます。</p>
     </section>
 
     <!-- 比較 -->
     <section id="view-compare" class="view">
-      <div class="toolbar">
-        <div class="toolbar-row">
-          <select id="cmp-metric" aria-label="比較する項目"></select>
-          <select id="cmp-filter" aria-label="対象">
+      <div class="filter-panel always">
+        <label>比較する項目<select id="cmp-metric"></select></label>
+        <label>対象
+          <select id="cmp-filter">
             <option value="active">選考中のみ</option>
             <option value="all">すべて</option>
           </select>
-          <select id="cmp-industry" class="industry-filter" aria-label="業界で絞り込み"></select>
-        </div>
-        <label class="check-inline"><input id="cmp-tokyo" type="checkbox"> 東京勤務の可能性がある職種のみ（◎・△）</label>
+        </label>
+        <label>業界<select id="cmp-industry"></select></label>
+        <label class="check-inline span2"><input id="cmp-tokyo" type="checkbox"> 東京勤務の可能性がある職種のみ（◎・△）</label>
       </div>
       <div class="panel chart-panel">
         <h2 id="cmp-title"></h2>
@@ -77,14 +124,39 @@
         <h2>募集要項 一覧</h2>
         <div class="table-wrap"><table id="cmp-table" class="cmp-table"></table></div>
       </div>
-      <p id="cmp-empty" class="empty" hidden>募集要項が入力された企業がありません。<br>企業の詳細 →「募集要項」から入力できます。</p>
+      <p id="cmp-empty" class="empty" hidden>募集要項が入力された企業がありません。<br>企業の編集画面で募集要項を貼り付けると比較できます。</p>
     </section>
 
-    <!-- ログイン -->
+    <!-- その他 -->
+    <section id="view-more" class="view">
+      <div class="menu-list">
+        <button class="menu-item" data-goto="login"><span class="mi-ico">🔑</span><span class="mi-text"><b>ログイン情報</b><small>マイナビ・リクナビ・企業マイページのID</small></span><svg class="chev"><use href="#i-chev"/></svg></button>
+        <button class="menu-item" data-goto="es"><span class="mi-ico">✍️</span><span class="mi-text"><b>ESストック</b><small>自己PR・ガクチカなどの文章を保存</small></span><svg class="chev"><use href="#i-chev"/></svg></button>
+        <button class="menu-item" data-open-guide><span class="mi-ico">🏭</span><span class="mi-text"><b>業界ガイド</b><small>業界の分類とどんな仕事か</small></span><svg class="chev"><use href="#i-chev"/></svg></button>
+      </div>
+      <div class="panel">
+        <h2>データ</h2>
+        <p class="note">データはこの端末のブラウザ内にのみ保存されます。機種変更や別端末で使う場合はバックアップを書き出して読み込んでください。<br>※ バックアップにはパスワードもそのまま含まれるので、人に渡したり公開しないでください。</p>
+        <div class="btn-col">
+          <button id="export-btn" class="btn">バックアップを書き出す</button>
+          <label class="btn">バックアップを読み込む
+            <input id="import-file" type="file" accept="application/json,.json" hidden>
+          </label>
+          <button id="clear-btn" class="btn danger">すべてのデータを削除</button>
+        </div>
+      </div>
+      <div class="panel">
+        <h2>このアプリについて</h2>
+        <p class="note">ホーム画面に追加するとアプリとしてオフラインでも使えます。<br>iPhone: Safari の共有ボタン →「ホーム画面に追加」</p>
+        <p class="note" id="version"></p>
+      </div>
+    </section>
+
+    <!-- ログイン情報 -->
     <section id="view-login" class="view">
       <input id="login-search" type="search" placeholder="企業名・サービス名で検索">
       <div class="section-head">
-        <h3>就活サービス（マイナビ・リクナビ など）</h3>
+        <h3>就活サービス</h3>
         <button id="add-account" class="btn small">＋ 追加</button>
       </div>
       <div id="account-list" class="card-list"></div>
@@ -93,40 +165,22 @@
       <p class="note" style="margin-top:12px">ID・パスワードはこの端末のブラウザ内にだけ保存され、外部には送信されません。</p>
     </section>
 
-    <!-- 設定 -->
-    <section id="view-settings" class="view">
-      <div class="panel">
-        <h2>データ</h2>
-        <p class="note">データはこの端末のブラウザ内にのみ保存されます。機種変更や別端末で使う場合はバックアップを書き出して読み込んでください。<br>※ バックアップファイルにはパスワードもそのまま含まれるので、人に渡したり公開しないでください。</p>
-        <div class="btn-col">
-          <button id="export-btn" class="btn">バックアップを書き出す (JSON)</button>
-          <label class="btn">バックアップを読み込む
-            <input id="import-file" type="file" accept="application/json,.json" hidden>
-          </label>
-          <button id="clear-btn" class="btn danger">すべてのデータを削除</button>
-        </div>
-      </div>
-      <div class="panel">
-        <h2>業界ガイド</h2>
-        <p class="note">就活でよく使われる業界の分類と、それぞれどんな仕事をしているかの説明です。</p>
-        <button class="btn" data-open-guide>業界ガイドを開く</button>
-      </div>
-      <div class="panel">
-        <h2>このアプリについて</h2>
-        <p class="note">ホーム画面に追加するとアプリとしてオフラインでも使えます。<br>iPhone: Safari の共有ボタン →「ホーム画面に追加」</p>
-        <p class="note" id="version"></p>
-      </div>
+    <!-- ESストック -->
+    <section id="view-es" class="view">
+      <p class="note">自己PR・ガクチカ・志望動機のベースなど、何度も使う文章を保存しておけます。企業ごとの「ES・面接メモ」からも呼び出せます。</p>
+      <div id="stock-list" class="card-list"></div>
+      <p id="stock-empty" class="empty" hidden>まだ文章がありません。<br>右下の ＋ から追加しましょう。</p>
     </section>
   </main>
 
-  <button id="fab" class="fab" aria-label="企業を追加">＋</button>
+  <button id="fab" class="fab" aria-label="追加"><svg><use href="#i-plus"/></svg></button>
 
   <nav class="tabbar">
-    <button data-view="companies" class="active"><span class="ico">🏢</span>企業</button>
-    <button data-view="schedule"><span class="ico">📅</span>予定</button>
-    <button data-view="compare"><span class="ico">📊</span>比較</button>
-    <button data-view="login"><span class="ico">🔑</span>ログイン</button>
-    <button data-view="settings"><span class="ico">⚙️</span>設定</button>
+    <button data-view="home" class="active"><svg><use href="#i-home"/></svg>ホーム</button>
+    <button data-view="companies"><svg><use href="#i-building"/></svg>企業</button>
+    <button data-view="schedule"><svg><use href="#i-calendar"/></svg>予定</button>
+    <button data-view="compare"><svg><use href="#i-chart"/></svg>比較</button>
+    <button data-view="more"><svg><use href="#i-menu"/></svg>その他</button>
   </nav>
 
   <datalist id="service-names">
@@ -135,83 +189,100 @@
     <option value="unistyle"><option value="type就活"><option value="あさがくナビ"><option value="LinkedIn">
   </datalist>
 
-  <!-- 企業詳細 / 編集 -->
-  <dialog id="company-dialog">
+  <!-- 企業の詳細（閲覧） -->
+  <dialog id="detail-dialog" class="sheet">
+    <div class="dialog-head">
+      <button type="button" class="link" data-close>閉じる</button>
+      <h2>企業の詳細</h2>
+      <button type="button" class="link strong" id="detail-edit">編集</button>
+    </div>
+    <div class="dialog-body" id="detail-body"></div>
+  </dialog>
+
+  <!-- 企業の編集 -->
+  <dialog id="company-dialog" class="sheet">
     <form id="company-form" method="dialog">
       <div class="dialog-head">
-        <button type="button" class="link" data-close>閉じる</button>
+        <button type="button" class="link" data-close>キャンセル</button>
         <h2 id="company-dialog-title">企業を追加</h2>
         <button type="submit" class="link strong">保存</button>
       </div>
       <div class="dialog-body">
-        <label>企業名 <span class="req">*</span>
-          <input name="name" required autocomplete="off">
-        </label>
-        <label>ステータス
-          <select name="status" id="status-select"></select>
-        </label>
-        <label>業界 <button type="button" class="link inline" data-open-guide>業界ガイドを見る</button>
-          <select name="industry" id="industry-select"></select>
-          <input name="industryOther" autocomplete="off" placeholder="業界名を入力" hidden>
-        </label>
-        <div id="industry-suggest" class="candidates" hidden></div>
-        <div id="industry-info" class="industry-info" hidden></div>
-        <label>志望度
-          <div class="stars" id="priority-input">
-            <button type="button" data-v="1">★</button><button type="button" data-v="2">★</button><button type="button" data-v="3">★</button>
-          </div>
-          <input type="hidden" name="priority" value="2">
-        </label>
-
-        <h3 class="form-section">📍 勤務地</h3>
-        <label>本社所在地
-          <input name="hq" autocomplete="off" placeholder="例: 東京都千代田区">
-        </label>
-        <label>その他の勤務地・支社・配属先
-          <textarea name="locations" rows="3" placeholder="例: 大阪・名古屋・全国転勤あり / 初期配属は東京"></textarea>
-        </label>
-        <label>東京で働ける？
-          <select name="tokyo">
-            <option value="">不明</option>
-            <option value="only">◎ 東京勤務が確実（東京のみ・勤務地確約）</option>
-            <option value="likely">△ 東京の可能性あり（転勤・配属次第）</option>
-            <option value="no">× 東京勤務なし</option>
-          </select>
-        </label>
-        <p id="tokyo-hint" class="hint" hidden></p>
-
-        <h3 class="form-section">🔑 ログイン</h3>
-        <label>エントリー経路（どこから応募したか）
-          <select name="route" id="route-select"></select>
-        </label>
-        <div id="route-info" class="route-info" hidden></div>
-        <label>企業マイページURL
-          <input name="url" type="url" inputmode="url" placeholder="https://">
-          <a id="open-url" class="open-url" target="_blank" rel="noopener" hidden>マイページを開く ↗</a>
-        </label>
-        <div class="grid2">
-          <label>ログインID
-            <input name="loginId" autocomplete="off" autocapitalize="off" spellcheck="false">
+        <section class="fgroup">
+          <h3 class="fg-title">基本情報</h3>
+          <label>企業名 <span class="req">*</span>
+            <input name="name" required autocomplete="off">
           </label>
-          <label>パスワード
-            <div class="pw-field" id="company-pw">
-              <input type="password" autocomplete="off" autocapitalize="off" spellcheck="false">
-              <button type="button" data-act="toggle">表示</button>
+          <label>ステータス
+            <select name="status" id="status-select"></select>
+          </label>
+          <label>業界 <button type="button" class="link inline" data-open-guide>業界ガイドを見る</button>
+            <select name="industry" id="industry-select"></select>
+            <input name="industryOther" autocomplete="off" placeholder="業界名を入力" hidden>
+          </label>
+          <div id="industry-suggest" class="candidates" hidden></div>
+          <div id="industry-info" class="industry-info" hidden></div>
+          <label>志望度
+            <div class="stars" id="priority-input">
+              <button type="button" data-v="1">★</button><button type="button" data-v="2">★</button><button type="button" data-v="3">★</button>
             </div>
+            <input type="hidden" name="priority" value="2">
           </label>
-        </div>
+        </section>
 
-        <div class="paste-box">
-          <h3 class="form-section first">📋 募集要項を貼り付けて自動入力</h3>
-          <p class="note small">採用サイトの「募集要項」をまるごとコピーして、下のボタンを押すか欄に貼り付けるだけで各項目に入力されます。</p>
+        <section class="fgroup paste-box">
+          <h3 class="fg-title">📋 募集要項を貼り付けて自動入力</h3>
+          <p class="note small">採用サイトの「募集要項」をまるごとコピーして、ボタンを押すか下の欄に貼り付けると各項目に入力されます。</p>
           <button type="button" id="paste-clipboard" class="btn primary full-w">コピーした募集要項を貼り付け</button>
           <p id="paste-target" class="note small paste-target" hidden></p>
           <textarea name="p_raw" rows="2" placeholder="ここに直接貼り付けてもOK（貼った瞬間に読み取ります）"></textarea>
           <button type="button" id="parse-posting" class="btn small">もう一度読み取る</button>
-        </div>
+        </section>
 
-        <details class="posting" id="posting-section">
-          <summary><h3 class="form-section">📄 職種・募集要項（任意）</h3></summary>
+        <section class="fgroup">
+          <h3 class="fg-title">📍 勤務地</h3>
+          <label>本社所在地
+            <input name="hq" autocomplete="off" placeholder="例: 東京都千代田区">
+          </label>
+          <label>その他の勤務地・支社・配属先
+            <textarea name="locations" rows="3" placeholder="例: 大阪・名古屋・全国転勤あり / 初期配属は東京"></textarea>
+          </label>
+          <label>東京で働ける？
+            <select name="tokyo">
+              <option value="">不明</option>
+              <option value="only">◎ 東京勤務が確実（東京のみ・勤務地確約）</option>
+              <option value="likely">△ 東京の可能性あり（転勤・配属次第）</option>
+              <option value="no">× 東京勤務なし</option>
+            </select>
+          </label>
+          <p id="tokyo-hint" class="hint" hidden></p>
+        </section>
+
+        <section class="fgroup">
+          <h3 class="fg-title">🔑 ログイン</h3>
+          <label>エントリー経路（どこから応募したか）
+            <select name="route" id="route-select"></select>
+          </label>
+          <div id="route-info" class="route-info" hidden></div>
+          <label>企業マイページURL
+            <input name="url" type="url" inputmode="url" placeholder="https://">
+            <a id="open-url" class="open-url" target="_blank" rel="noopener" hidden>マイページを開く ↗</a>
+          </label>
+          <div class="grid2">
+            <label>ログインID
+              <input name="loginId" autocomplete="off" autocapitalize="off" spellcheck="false">
+            </label>
+            <label>パスワード
+              <div class="pw-field" id="company-pw">
+                <input type="password" autocomplete="off" autocapitalize="off" spellcheck="false">
+                <button type="button" data-act="toggle">表示</button>
+              </div>
+            </label>
+          </div>
+        </section>
+
+        <details class="fgroup posting" id="posting-section">
+          <summary><h3 class="fg-title">📄 職種・募集要項</h3></summary>
           <p class="note small">同じ会社でも職種・コースごとに条件が違う場合は、タブを追加して別々に入力できます。</p>
           <div class="posting-tabs" id="posting-tabs"></div>
           <div class="grid2">
@@ -232,7 +303,7 @@
           </label>
           <label class="check-inline applied-check"><input type="checkbox" name="p_applied"> この職種に応募する・応募した</label>
 
-
+          <h4 class="sub-section">基本</h4>
           <label>募集者・入社する会社
             <input name="p_recruiter" autocomplete="off" placeholder="例: 〇〇グループ採用共同事業体">
           </label>
@@ -306,17 +377,12 @@
           </div>
         </details>
 
-        <label>メモ（志望動機・面接で聞かれたこと など）
-          <textarea name="memo" rows="4"></textarea>
-        </label>
-
-        <div id="events-section">
-          <div class="section-head">
-            <h3>予定・締切</h3>
-            <button type="button" id="add-event" class="btn small">＋ 予定を追加</button>
-          </div>
-          <ul id="event-list" class="event-list"></ul>
-        </div>
+        <section class="fgroup">
+          <h3 class="fg-title">📝 メモ</h3>
+          <label>志望動機の材料・気になった点 など
+            <textarea name="memo" rows="4"></textarea>
+          </label>
+        </section>
 
         <button type="button" id="delete-company" class="btn danger full">この企業を削除</button>
       </div>
@@ -324,14 +390,10 @@
   </dialog>
 
   <!-- 予定 編集 -->
-  <dialog id="event-dialog">
+  <dialog id="event-dialog" class="small-dialog">
     <form id="event-form" method="dialog">
-      <div class="dialog-head">
-        <button type="button" class="link" data-close>キャンセル</button>
-        <h2>予定</h2>
-        <button type="submit" class="link strong">OK</button>
-      </div>
       <div class="dialog-body">
+        <h2 id="event-dialog-title">予定・締切</h2>
         <label>内容 <span class="req">*</span>
           <input name="title" required list="event-title-list" autocomplete="off" placeholder="例: ES締切 / 一次面接">
           <datalist id="event-title-list">
@@ -345,13 +407,68 @@
         </div>
         <label>場所・URL<input name="place" autocomplete="off"></label>
         <label class="check-inline"><input name="done" type="checkbox"> 完了</label>
-        <button type="button" id="delete-event" class="btn danger full">この予定を削除</button>
+        <div class="btn-row">
+          <button type="button" id="delete-event" class="btn danger left">削除</button>
+          <button type="button" class="btn" data-close>キャンセル</button>
+          <button type="submit" class="btn primary">保存</button>
+        </div>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- ES・面接メモ -->
+  <dialog id="note-dialog" class="sheet">
+    <form id="note-form" method="dialog">
+      <div class="dialog-head">
+        <button type="button" class="link" data-close>キャンセル</button>
+        <h2>ES・面接メモ</h2>
+        <button type="submit" class="link strong">保存</button>
+      </div>
+      <div class="dialog-body">
+        <div class="seg" id="note-kind">
+          <button type="button" data-v="es">ES</button><button type="button" data-v="interview">面接</button><button type="button" data-v="other">その他</button>
+        </div>
+        <label>質問・設問 <span class="req">*</span>
+          <input name="q" required list="question-list" autocomplete="off" placeholder="例: 学生時代に力を入れたこと（400字）">
+          <datalist id="question-list">
+            <option value="志望動機"><option value="自己PR"><option value="学生時代に力を入れたこと（ガクチカ）">
+            <option value="長所と短所"><option value="入社後にやりたいこと"><option value="挫折経験"><option value="逆質問">
+          </datalist>
+        </label>
+        <label>回答 <span class="count" id="note-count">0字</span>
+          <textarea name="a" rows="10"></textarea>
+        </label>
+        <div id="note-stock" class="candidates" hidden></div>
+        <label>振り返り（手応え・次に活かすこと）
+          <textarea name="memo" rows="3"></textarea>
+        </label>
+        <button type="button" id="delete-note" class="btn danger full">このメモを削除</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- ESストック -->
+  <dialog id="stock-dialog" class="sheet">
+    <form id="stock-form" method="dialog">
+      <div class="dialog-head">
+        <button type="button" class="link" data-close>キャンセル</button>
+        <h2>ESストック</h2>
+        <button type="submit" class="link strong">保存</button>
+      </div>
+      <div class="dialog-body">
+        <label>タイトル <span class="req">*</span>
+          <input name="title" required list="question-list" autocomplete="off" placeholder="例: 自己PR（400字・粘り強さ）">
+        </label>
+        <label>本文 <span class="count" id="stock-count">0字</span>
+          <textarea name="text" rows="14"></textarea>
+        </label>
+        <button type="button" id="delete-stock" class="btn danger full">この文章を削除</button>
       </div>
     </form>
   </dialog>
 
   <!-- 就活サービス アカウント -->
-  <dialog id="account-dialog">
+  <dialog id="account-dialog" class="sheet">
     <form id="account-form" method="dialog">
       <div class="dialog-head">
         <button type="button" class="link" data-close>キャンセル</button>
@@ -359,30 +476,32 @@
         <button type="submit" class="link strong">保存</button>
       </div>
       <div class="dialog-body">
-        <label>サービス名 <span class="req">*</span>
-          <input name="name" required list="service-names" autocomplete="off" placeholder="例: マイナビ2028">
-        </label>
-        <label>ログインURL
-          <input name="url" type="url" inputmode="url" placeholder="https://">
-        </label>
-        <label>ログインID・メールアドレス
-          <input name="loginId" autocomplete="off" autocapitalize="off" spellcheck="false">
-        </label>
-        <label>パスワード
-          <div class="pw-field" id="account-pw">
-            <input type="password" autocomplete="off" autocapitalize="off" spellcheck="false">
-            <button type="button" data-act="toggle">表示</button>
-          </div>
-        </label>
-        <label>メモ
-          <textarea name="memo" rows="2" placeholder="例: 登録メールは大学のアドレス"></textarea>
-        </label>
+        <section class="fgroup">
+          <label>サービス名 <span class="req">*</span>
+            <input name="name" required list="service-names" autocomplete="off" placeholder="例: マイナビ2028">
+          </label>
+          <label>ログインURL
+            <input name="url" type="url" inputmode="url" placeholder="https://">
+          </label>
+          <label>ログインID・メールアドレス
+            <input name="loginId" autocomplete="off" autocapitalize="off" spellcheck="false">
+          </label>
+          <label>パスワード
+            <div class="pw-field" id="account-pw">
+              <input type="password" autocomplete="off" autocapitalize="off" spellcheck="false">
+              <button type="button" data-act="toggle">表示</button>
+            </div>
+          </label>
+          <label>メモ
+            <textarea name="memo" rows="2" placeholder="例: 登録メールは大学のアドレス"></textarea>
+          </label>
+        </section>
         <button type="button" id="delete-account" class="btn danger full">このサービスを削除</button>
       </div>
     </form>
   </dialog>
 
-  <!-- マスターパスワード -->
+  <!-- 旧バージョンのパスワード引き継ぎ -->
   <dialog id="vault-dialog" class="small-dialog">
     <form id="vault-form" method="dialog">
       <div class="dialog-body">
@@ -401,7 +520,7 @@
   </dialog>
 
   <!-- 業界ガイド -->
-  <dialog id="guide-dialog">
+  <dialog id="guide-dialog" class="sheet">
     <div class="dialog-head">
       <span></span>
       <h2>業界ガイド</h2>
