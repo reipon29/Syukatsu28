@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '2.0.1';
+const APP_VERSION = '2.1.0';
 const STORAGE_KEY = 'syukatsu.v1';
 
 const STATUSES = [
@@ -24,6 +24,14 @@ const TOKYO = {
   only:   { badge: '東京◎', cls: 'tk-only',   label: '東京勤務が確実' },
   likely: { badge: '東京△', cls: 'tk-likely', label: '東京の可能性あり' },
   no:     { badge: '東京×', cls: 'tk-no',     label: '東京勤務なし' },
+};
+
+// 学歴（初任給の自動選択に使う）
+const DEGREES = {
+  master: { label: '大学院（修士）', re: /大学院|院了|院卒|修士|博士前期|博士課程前期|Master/i },
+  doctor: { label: '大学院（博士）', re: /博士(?!前期)|博士後期|ドクター|Ph\.?D/i },
+  bachelor: { label: '大学（学部）', re: /大学卒|大卒|学部卒|学士|4年制大学/ },
+  junior: { label: '短大・専門・高専', re: /短大|短期大学|専門|高専/ },
 };
 
 // 比較できる数値項目（better: 大きいほど良い=high / 小さいほど良い=low）
@@ -61,7 +69,7 @@ function normalizeEvent(ev) {
   return { id: str(ev.id) || uid(), title: str(ev.title), date: ev.date, time: str(ev.time), place: str(ev.place), done: Boolean(ev.done) };
 }
 function normalizePosting(p = {}) {
-  const out = { id: str(p.id) || uid(), tokyo: TOKYO[p.tokyo] ? p.tokyo : '', applied: Boolean(p.applied) };
+  const out = { id: str(p.id) || uid(), tokyo: TOKYO[p.tokyo] ? p.tokyo : '', applied: Boolean(p.applied), prevYear: Boolean(p.prevYear) };
   POSTING_TEXT.forEach(k => { out[k] = str(p[k]); });
   POSTING_NUM.forEach(k => { out[k] = numOrNull(p[k]); });
   POSTING_FLAGS.forEach(f => { out[f.key] = Boolean(p[f.key]); });
@@ -126,14 +134,23 @@ function normalizeState(d) {
   const companies = (Array.isArray(d.companies) ? d.companies : []).filter(c => c && typeof c.name === 'string').map(normalizeCompany);
   companies.forEach(c => { if (c.route && c.route !== 'own' && !ids.has(c.route)) c.route = ''; });
   const stock = (Array.isArray(d.stock) ? d.stock : []).filter(x => x && (x.title || x.text)).map(normalizeStock);
+  const profile = normalizeProfile(d.profile);
   const v = d.vault;
   const hasCipher = [...companies, ...accounts].some(x => isCipher(x.pwd));
   if (hasCipher && v && typeof v.salt === 'string' && isCipher(v.check)) {
-    return { companies, accounts, stock, vault: { salt: v.salt, check: v.check } };
+    return { companies, accounts, stock, profile, vault: { salt: v.salt, check: v.check } };
   }
   // 鍵情報がない暗号データは復元できないので破棄
   [...companies, ...accounts].forEach(x => { if (isCipher(x.pwd)) x.pwd = ''; });
-  return { companies, accounts, stock };
+  return { companies, accounts, stock, profile };
+}
+function normalizeProfile(p) {
+  p = p && typeof p === 'object' ? p : {};
+  const y = Number(p.gradYear);
+  return {
+    gradYear: y >= 2020 && y <= 2040 ? y : 2028,
+    degree: ['master', 'doctor', 'bachelor', 'junior'].includes(p.degree) ? p.degree : 'master',
+  };
 }
 
 let state = load();
@@ -142,7 +159,7 @@ function load() {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) return normalizeState(JSON.parse(raw));
   } catch (e) { console.error(e); }
-  return { companies: [], accounts: [], stock: [] };
+  return { companies: [], accounts: [], stock: [], profile: normalizeProfile() };
 }
 function save() {
   try {
@@ -590,7 +607,10 @@ function compareTargets() {
     }));
   return rows;
 }
-const rowLabel = r => `${esc(r.c.name)}${r.title ? `<small>${esc(r.title)}</small>` : ''}`;
+const rowLabel = r => {
+  const sub = [r.title, r.p.prevYear ? '前年度' : ''].filter(Boolean).join('・');
+  return `${esc(r.c.name)}${sub ? `<small>${esc(sub)}</small>` : ''}`;
+};
 const rowText = r => r.c.name + (r.title ? `（${r.title}）` : '');
 function renderCompare() {
   fillIndustryFilters();
@@ -719,7 +739,20 @@ $('#add-account').addEventListener('click', () => openAccount(null));
 /* ---------- その他 ---------- */
 function renderMore() {
   $('#version').textContent = 'バージョン ' + APP_VERSION;
+  $('#profile-year').value = state.profile.gradYear;
+  $('#profile-degree').value = state.profile.degree;
 }
+(() => {
+  const y = new Date().getFullYear();
+  $('#profile-year').innerHTML = Array.from({ length: 6 }, (_, i) => y - 1 + i)
+    .map(v => `<option value="${v}">${v}年3月卒業（${String(v).slice(2)}卒）</option>`).join('');
+  $('#profile-degree').innerHTML = Object.entries(DEGREES).map(([k, d]) => `<option value="${k}">${d.label}</option>`).join('');
+})();
+['#profile-year', '#profile-degree'].forEach(sel => $(sel).addEventListener('change', () => {
+  state.profile = normalizeProfile({ gradYear: $('#profile-year').value, degree: $('#profile-degree').value });
+  save();
+  toast('保存しました');
+}));
 
 /* ---------- company dialog ---------- */
 const cDialog = $('#company-dialog');
@@ -888,6 +921,7 @@ function loadPostingForm() {
   POSTING_FLAGS.forEach(f => { cForm['p_' + f.key].checked = p[f.key]; });
   cForm.p_tokyo.value = p.tokyo;
   cForm.p_applied.checked = p.applied;
+  cForm.p_prevYear.checked = p.prevYear;
   showSalaryCandidates();
   renderPostingTabs();
 }
@@ -899,6 +933,7 @@ function savePostingForm() {
   POSTING_FLAGS.forEach(f => { p[f.key] = cForm['p_' + f.key].checked; });
   p.tokyo = cForm.p_tokyo.value;
   p.applied = cForm.p_applied.checked;
+  p.prevYear = cForm.p_prevYear.checked;
 }
 function renderPostingTabs() {
   const ps = editing.postings;
@@ -1020,7 +1055,7 @@ const POSTING_LABELS = [
   ['bonusNote',    ['賞与', 'ボーナス']],
   ['holidaysNote', ['休日休暇', '休日・休暇', '休日', '休暇', '年間休日']],
   ['hiring',       ['採用予定人数', '募集人数', '採用人数', '採用予定数']],
-  ['note',         ['選考フロー', '選考方法', '選考プロセス', '提出書類', '選考の流れ']],
+  ['note',         ['選考フロー', '選考方法', '選考プロセス', '提出書類', '選考の流れ', '応募方法', '選考ステップ']],
 ];
 // 1〜2行で終わるはずの項目（ページ末尾のメニューなどを取り込まないよう行数を制限）
 const SHORT_FIELDS = new Set(['recruiter', 'startDate', 'contract', 'probation', 'commute', 'raise', 'bonusNote', 'holidaysNote', 'hiring', 'allowances']);
@@ -1046,15 +1081,48 @@ function matchInline(line) {
   return null;
 }
 const isStop = line => STOP_LABELS.includes(line.replace(/[\s:：]+$/, ''));
-function matchLabel(line) {
-  const t = line.replace(/[\s:：]+$/, '').replace(/^[■●◆▼【\[]\s*/, '').replace(/[】\]]$/, '');
+function labelField(t, exactOnly = false) {
   for (const [field, labels] of POSTING_LABELS) {
     for (const l of labels) {
-      if (t === l) return { field, rest: '' };
-      if (t.startsWith(l) && /^[（(]/.test(t.slice(l.length)) && t.length <= l.length + 14) return { field, rest: '' };
+      if (t === l) return field;
+      if (!exactOnly && t.startsWith(l) && /^[（(]/.test(t.slice(l.length)) && t.length <= l.length + 14) return field;
     }
   }
   return null;
+}
+function matchLabel(line) {
+  let t = line.replace(/[\s:：]+$/, '');
+  // 【基本給】 大学院了：277,000円 のように、見出しと内容が1行にある
+  const br = t.match(/^[【\[［]\s*([^】\]］]{1,12}?)\s*[】\]］][\s:：]*(.*)$/);
+  if (br) {
+    const f = labelField(br[1]);
+    if (f) return { field: f, rest: br[2] };
+    // 【その他】 ○○ のように内容つきの知らない見出しは「その他」欄へ
+    return br[2] ? { field: 'note', rest: line.trim() } : null;
+  }
+  t = t.replace(/^[■●◆▼◇□]\s*/, '');
+  const f = labelField(t);
+  if (f) return { field: f, rest: '' };
+  // 「応募方法 一次選考について」「賞与 年2回」のようなスペース区切り
+  const sp = t.match(/^(\S{2,10}?)[\s:：]+(.+)$/);
+  if (sp) {
+    const f2 = labelField(sp[1], true);
+    if (f2) return { field: f2, rest: sp[2] };
+  }
+  return null;
+}
+
+/** 「、」で区切る（カッコの中の「、」では区切らない） */
+function splitTopLevel(line) {
+  const out = [];
+  let depth = 0, buf = '';
+  for (const ch of line) {
+    if ('（(「'.includes(ch)) depth++;
+    if ('）)」'.includes(ch)) depth = Math.max(0, depth - 1);
+    if ((ch === '、' || ch === ',') && depth === 0) { out.push(buf.trim()); buf = ''; } else buf += ch;
+  }
+  if (buf.trim()) out.push(buf.trim());
+  return out;
 }
 
 function parsePosting(raw) {
@@ -1070,7 +1138,7 @@ function parsePosting(raw) {
     if (m) {
       cur = { field: m.field, lines: [] };
       segs.push(cur);
-      const rest = tab.slice(1).join(' ').trim();
+      const rest = [m.rest, ...tab.slice(1)].join(' ').trim();
       if (rest) cur.lines.push(rest);
       continue;
     }
@@ -1094,6 +1162,13 @@ function parsePosting(raw) {
     out[field] = out[field] ? out[field] + '\n' + lines.join('\n') : lines.join('\n');
   });
   inline.forEach(({ field, text }) => { out[field] = out[field] ? out[field] + '\n' + text : text; });
+  // 「昇給年1回（6月）、賞与年2回（7月、12月）」のように1行に並んでいるものを拾う
+  for (const line of raw.split('\n')) {
+    for (const piece of splitTopLevel(line.replace(/^[【\[［][^】\]］]*[】\]］]/, '').trim())) {
+      if (!out.raise && /^昇給/.test(piece)) out.raise = piece;
+      if (!out.bonusNote && /^賞与/.test(piece)) out.bonusNote = piece;
+    }
+  }
   return out;
 }
 
@@ -1108,12 +1183,28 @@ function yenAmounts(text) {
 function salaryCandidates(text) {
   return [...new Set(yenAmounts(text).filter(v => v >= 150000 && v <= 1500000))];
 }
+/** 初任給の詳細から、自分の学歴の行の金額を探す */
+function salaryForDegree(text, degree) {
+  const re = DEGREES[degree]?.re;
+  if (!re || !text) return null;
+  for (const line of text.split('\n')) {
+    const m = line.match(re);
+    if (!m) continue;
+    const amt = salaryCandidates(line.slice(m.index))[0];
+    if (amt) return amt;
+  }
+  // 博士の記載がなければ修士の金額を使う
+  return degree === 'doctor' ? salaryForDegree(text, 'master') : null;
+}
 function showSalaryCandidates() {
   const box = $('#salary-candidates');
-  const cands = salaryCandidates(cForm.p_salaryNote.value);
+  const text = cForm.p_salaryNote.value;
+  const cands = salaryCandidates(text);
+  const mine = salaryForDegree(text, state.profile.degree);
   box.hidden = cands.length < 2;
   box.innerHTML = cands.length < 2 ? '' : '詳細にある金額から選ぶ: ' +
-    cands.map(v => `<button type="button" data-v="${v}">${v.toLocaleString('ja-JP')}円</button>`).join('');
+    cands.map(v => `<button type="button" data-v="${v}" class="${v === mine ? 'mine' : ''}">${v === mine ? '★ ' : ''}${v.toLocaleString('ja-JP')}円</button>`).join('') +
+    (mine ? `<span>★ = ${DEGREES[state.profile.degree].label}</span>` : '');
 }
 $('#salary-candidates').addEventListener('click', e => {
   const b = e.target.closest('button[data-v]');
@@ -1121,6 +1212,11 @@ $('#salary-candidates').addEventListener('click', e => {
 });
 cForm.p_salaryNote.addEventListener('input', showSalaryCandidates);
 
+/** 前年度（1つ上の学年向け）の募集要項か */
+function isPrevYearPosting(raw, gradYear) {
+  const pat = y => new RegExp(`${y}年(?:度|卒|3月)|${String(y).slice(2)}卒|${y}年\\s*3月`);
+  return pat(gradYear - 1).test(raw) && !pat(gradYear).test(raw);
+}
 function applyPosting(auto = false) {
   const raw = cForm.p_raw.value;
   if (!raw.trim()) { if (!auto) toast('募集要項のテキストを貼り付けてください'); return; }
@@ -1138,7 +1234,9 @@ function applyPosting(auto = false) {
   }
   // 数値の抽出
   const sal = salaryCandidates(parsed.salaryNote);
+  const mySal = sal.length > 1 ? salaryForDegree(parsed.salaryNote, state.profile.degree) : null;
   if (sal.length === 1) values.p_salary = sal[0];
+  else if (mySal) values.p_salary = mySal;
   const housing = (raw.match(/住宅(?:補助|手当)[^\n]*?(\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)\s*(万)?\s*円/) || []);
   if (housing[1]) values.p_housing = toYen(housing[1], housing[2]);
   const bonus = (parsed.bonusNote || '').match(/(\d+(?:\.\d+)?)\s*(?:ヶ月|か月|カ月|ヵ月|ケ月)/);
@@ -1180,6 +1278,8 @@ function applyPosting(auto = false) {
     count++;
   }
   for (const [n, v] of Object.entries(flags)) if (v && !cForm[n].checked) { cForm[n].checked = true; count++; }
+  const prev = isPrevYearPosting(raw, state.profile.gradYear);
+  if (prev && !cForm.p_prevYear.checked) { cForm.p_prevYear.checked = true; renderPostingTabs(); }
   showSalaryCandidates();
   updateTokyoHint();
   let industryMsg = '';
@@ -1189,7 +1289,11 @@ function applyPosting(auto = false) {
   } else updateIndustryUi();
   toast(`${count} 項目を入力しました${industryMsg}。内容を確認して保存してください`);
   $('#posting-section').open = true;
-  if (sal.length > 1) setTimeout(() => toast(`初任給の候補が ${sal.length} 件あります。自分に当てはまる額をタップしてください`), 2000);
+  const later = [];
+  if (mySal) later.push(`初任給は${DEGREES[state.profile.degree].label}の ${mySal.toLocaleString('ja-JP')}円 にしました`);
+  else if (sal.length > 1) later.push(`初任給の候補が ${sal.length} 件あります。自分に当てはまる額をタップしてください`);
+  if (prev) later.push(`${String(state.profile.gradYear - 1).slice(2)}卒向け（前年度）の募集要項のようです。「前年度の情報」として記録しました`);
+  later.forEach((m, i) => setTimeout(() => toast(m), 2000 * (i + 1)));
 }
 $('#parse-posting').addEventListener('click', () => applyPosting(false));
 // 貼り付けたら自動で読み取る
@@ -1351,7 +1455,7 @@ $('#import-file').addEventListener('change', async e => {
 $('#clear-btn').addEventListener('click', () => {
   if (!confirm('すべてのデータを削除します。元に戻せません。よろしいですか？')) return;
   if (!confirm('本当に削除しますか？（事前にバックアップの書き出しをおすすめします）')) return;
-  state = { companies: [], accounts: [], stock: [] };
+  state = { companies: [], accounts: [], stock: [], profile: state.profile };
   save();
   toast('削除しました');
   render();
@@ -1409,7 +1513,7 @@ function postingCard(c, p, i, multi) {
   const flags = POSTING_FLAGS.filter(f => p[f.key]).map(f => `<span class="tag">${f.label}</span>`).join('');
   const rows = POSTING_TEXT_LABELS.filter(([k]) => p[k]).map(([k, l]) => `<dt>${l}</dt><dd>${esc(p[k])}</dd>`).join('');
   return `<div class="pcard" data-pid="${p.id}">
-    <div class="pcard-top"><span class="pcard-title">${esc(title)}</span>${p.applied ? '<span class="applied-pill">応募</span>' : ''}${tokyoBadgeCode(tk)}</div>
+    <div class="pcard-top"><span class="pcard-title">${esc(title)}</span>${p.prevYear ? '<span class="prev-pill">前年度の情報</span>' : ''}${p.applied ? '<span class="applied-pill">応募</span>' : ''}${tokyoBadgeCode(tk)}</div>
     ${p.location ? `<div class="note small">📍 ${esc(p.location)}</div>` : ''}
     <div class="metric-grid">${metrics}</div>
     ${flags ? `<div>${flags}</div>` : ''}

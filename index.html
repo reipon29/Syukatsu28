@@ -7,6 +7,7 @@
   <meta name="description" content="就職活動の企業・選考状況・予定を管理するアプリ">
   <meta name="theme-color" content="#f5f6f8" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#101114" media="(prefers-color-scheme: dark)">
+  <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="就活管理">
@@ -133,6 +134,14 @@
         <button class="menu-item" data-goto="login"><span class="mi-ico">🔑</span><span class="mi-text"><b>ログイン情報</b><small>マイナビ・リクナビ・企業マイページのID</small></span><svg class="chev"><use href="#i-chev"/></svg></button>
         <button class="menu-item" data-goto="es"><span class="mi-ico">✍️</span><span class="mi-text"><b>ESストック</b><small>自己PR・ガクチカなどの文章を保存</small></span><svg class="chev"><use href="#i-chev"/></svg></button>
         <button class="menu-item" data-open-guide><span class="mi-ico">🏭</span><span class="mi-text"><b>業界ガイド</b><small>業界の分類とどんな仕事か</small></span><svg class="chev"><use href="#i-chev"/></svg></button>
+      </div>
+      <div class="panel">
+        <h2>あなたの情報</h2>
+        <p class="note">募集要項を読み取るときに、自分の学歴の初任給を自動で選んだり、前年度の募集要項かどうかを判定するのに使います。</p>
+        <div class="grid2">
+          <label class="plain">卒業予定<select id="profile-year"></select></label>
+          <label class="plain">学歴<select id="profile-degree"></select></label>
+        </div>
       </div>
       <div class="panel">
         <h2>データ</h2>
@@ -302,6 +311,7 @@
             <input name="p_location" autocomplete="off" placeholder="例: 東京本社 / 全国転勤あり / エリア限定（首都圏）">
           </label>
           <label class="check-inline applied-check"><input type="checkbox" name="p_applied"> この職種に応募する・応募した</label>
+          <label class="check-inline applied-check"><input type="checkbox" name="p_prevYear"> 前年度など過去の募集要項（参考情報）</label>
 
           <h4 class="sub-section">基本</h4>
           <label>募集者・入社する会社
