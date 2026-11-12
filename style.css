@@ -322,3 +322,19 @@ dialog.small-dialog .dialog-body > label { display: block; font-size: 13px; colo
 .guide-item .gi-desc { font-size: 13px; margin-top: 2px; }
 .guide-item .gi-jobs { font-size: 12px; color: var(--muted); margin-top: 4px; }
 .guide-item .chips { margin-top: 6px; }
+
+/* v1.5 複数職種 */
+.posting-tabs { display: flex; gap: 6px; overflow-x: auto; padding: 2px 0 10px; scrollbar-width: none; }
+.posting-tabs::-webkit-scrollbar { display: none; }
+.posting-tabs button {
+  flex: none; border: 1px solid var(--border); background: var(--surface); border-radius: 999px;
+  padding: 6px 12px; font-size: 13px; cursor: pointer; white-space: nowrap; max-width: 14em; overflow: hidden; text-overflow: ellipsis;
+}
+.posting-tabs button.on { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 700; }
+.posting-tabs button.add { border-style: dashed; color: var(--accent); }
+.posting-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 12px; }
+details.posting > label.applied-check { color: var(--text); font-size: 14px; }
+.paste-target { color: var(--accent); font-weight: 600; }
+.card-sub .applied { color: var(--text); }
+.bar-label .nm small, .cmp-table td small { display: block; font-size: 11px; color: var(--muted); }
+.bar-label .nm { line-height: 1.25; }

@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '1.4.0';
+const APP_VERSION = '1.5.0';
 const STORAGE_KEY = 'syukatsu.v1';
 
 const STATUSES = [
@@ -36,7 +36,7 @@ const METRICS = [
   { key: 'hiring',   label: '採用予定人数',    unit: '人',   better: 'high', fmt: v => v.toLocaleString('ja-JP') + '人' },
 ];
 const roundFor = (m, v) => (['bonus', 'overtime'].includes(m.key) ? Math.round(v * 10) / 10 : Math.round(v));
-const POSTING_TEXT = ['job', 'recruiter', 'eligibility', 'startDate', 'contract', 'probation', 'hours', 'holidaysNote',
+const POSTING_TEXT = ['title', 'location', 'job', 'recruiter', 'eligibility', 'startDate', 'contract', 'probation', 'hours', 'holidaysNote',
   'salaryNote', 'bonusNote', 'raise', 'benefits', 'allowances', 'commute', 'note', 'raw'];
 const POSTING_FLAGS = [
   { key: 'flex', label: 'フレックス' },
@@ -59,12 +59,25 @@ function normalizePwd(v) {
 function normalizeEvent(ev) {
   return { id: str(ev.id) || uid(), title: str(ev.title), date: ev.date, time: str(ev.time), place: str(ev.place), done: Boolean(ev.done) };
 }
+function normalizePosting(p = {}) {
+  const out = { id: str(p.id) || uid(), tokyo: TOKYO[p.tokyo] ? p.tokyo : '', applied: Boolean(p.applied) };
+  POSTING_TEXT.forEach(k => { out[k] = str(p[k]); });
+  POSTING_NUM.forEach(k => { out[k] = numOrNull(p[k]); });
+  POSTING_FLAGS.forEach(f => { out[f.key] = Boolean(p[f.key]); });
+  return out;
+}
+function postingHasData(p) {
+  return POSTING_NUM.some(k => p[k] != null) || POSTING_TEXT.some(k => p[k]) ||
+    POSTING_FLAGS.some(f => p[f.key]) || Boolean(p.tokyo) || p.applied;
+}
+const postingTitle = (p, i) => p.title || `職種${i + 1}`;
 function normalizeCompany(c) {
-  const p = c.posting && typeof c.posting === 'object' ? c.posting : {};
-  const posting = {};
-  POSTING_TEXT.forEach(k => { posting[k] = str(p[k]); });
-  POSTING_NUM.forEach(k => { posting[k] = numOrNull(p[k]); });
-  POSTING_FLAGS.forEach(f => { posting[f.key] = Boolean(p[f.key]); });
+  let postings = Array.isArray(c.postings) ? c.postings.filter(x => x && typeof x === 'object').map(normalizePosting) : [];
+  if (!Array.isArray(c.postings) && c.posting && typeof c.posting === 'object') {
+    // v1.4 以前（募集要項が1つだけ）からの移行
+    const one = normalizePosting(c.posting);
+    if (postingHasData(one)) postings = [one];
+  }
   return {
     id: str(c.id) || uid(),
     name: str(c.name),
@@ -78,7 +91,7 @@ function normalizeCompany(c) {
     url: str(c.url),
     loginId: str(c.loginId),
     pwd: normalizePwd(c.pwd),
-    posting,
+    postings,
     memo: str(c.memo),
     events: (Array.isArray(c.events) ? c.events : [])
       .filter(ev => ev && ev.title && /^\d{4}-\d{2}-\d{2}$/.test(ev.date))
@@ -162,12 +175,20 @@ function nextEvent(c) {
   return c.events.filter(e => !e.done && e.date >= today).sort((a, b) => evKey(a).localeCompare(evKey(b)))[0];
 }
 function stars(n) { return '★'.repeat(n) + '☆'.repeat(3 - n); }
-function tokyoBadge(c) {
-  const t = TOKYO[c.tokyo];
+const TOKYO_RANK = { only: 3, likely: 2, no: 1, '': 0 };
+const postingTokyo = (c, p) => p.tokyo || c.tokyo;
+/** 会社として一番東京に近い条件（どれか1つの職種でも東京確実なら ◎） */
+function bestTokyo(c) {
+  const codes = [c.tokyo, ...c.postings.filter(postingHasData).map(p => postingTokyo(c, p))];
+  return codes.reduce((best, x) => (TOKYO_RANK[x] > TOKYO_RANK[best] ? x : best), '');
+}
+function tokyoBadge(c) { return tokyoBadgeCode(bestTokyo(c)); }
+function tokyoBadgeCode(code) {
+  const t = TOKYO[code];
   return t ? `<span class="badge ${t.cls}" title="${t.label}">${t.badge}</span>` : '';
 }
 function hasPosting(c) {
-  return POSTING_NUM.some(k => c.posting[k] != null) || POSTING_TEXT.some(k => c.posting[k]) || POSTING_FLAGS.some(f => c.posting[f.key]);
+  return c.postings.some(postingHasData);
 }
 function accountById(id) { return state.accounts.find(a => a.id === id); }
 function routeName(c) {
@@ -374,13 +395,20 @@ function render() {
   else if (currentView === 'settings') renderSettings();
 }
 
-function matchTokyo(c, f) {
-  if (f === 'ok') return c.tokyo === 'only' || c.tokyo === 'likely';
-  if (f === 'only') return c.tokyo === 'only';
-  if (f === 'notno') return c.tokyo !== 'no';
+function matchTokyo(c, f) { return matchTokyoCode(bestTokyo(c), f); }
+function matchTokyoCode(code, f) {
+  if (f === 'ok') return code === 'only' || code === 'likely';
+  if (f === 'only') return code === 'only';
+  if (f === 'notno') return code !== 'no';
   return true;
 }
 
+function appliedText(c) {
+  const ps = c.postings.filter(postingHasData);
+  const applied = ps.map((p, i) => ({ p, i })).filter(x => x.p.applied).map(x => postingTitle(x.p, x.i));
+  if (applied.length) return `<span class="applied">応募: ${esc(applied.join('・'))}</span>`;
+  return ps.length > 1 ? `<span>職種 ${ps.length}件</span>` : '';
+}
 function renderCompanies() {
   fillRouteFilter();
   fillIndustryFilters();
@@ -440,6 +468,7 @@ function renderCompanies() {
         ${c.industry ? `<span>${esc(c.industry)}</span>` : ''}
         ${c.hq ? `<span>本社: ${esc(c.hq)}</span>` : ''}
         ${rn ? `<span>経路: ${esc(rn)}</span>` : ''}
+        ${appliedText(c)}
       </div>
       ${nextHtml}
     </li>`;
@@ -519,75 +548,83 @@ function compareTargets() {
   const f = $('#cmp-filter').value;
   const tokyoOnly = $('#cmp-tokyo').checked;
   const fi = $('#cmp-industry').value;
-  return state.companies.filter(c =>
-    (f === 'all' || ACTIVE_STATUSES.has(c.status)) && (!tokyoOnly || matchTokyo(c, 'ok')) && matchIndustry(c, fi));
+  const rows = [];
+  state.companies
+    .filter(c => (f === 'all' || ACTIVE_STATUSES.has(c.status)) && matchIndustry(c, fi))
+    .forEach(c => c.postings.forEach((p, i) => {
+      if (!postingHasData(p)) return;
+      const tk = postingTokyo(c, p);
+      if (tokyoOnly && !matchTokyoCode(tk, 'ok')) return;
+      const multi = c.postings.filter(postingHasData).length > 1;
+      rows.push({ c, p, tk, title: p.title || (multi ? postingTitle(p, i) : '') });
+    }));
+  return rows;
 }
+const rowLabel = r => `${esc(r.c.name)}${r.title ? `<small>${esc(r.title)}</small>` : ''}`;
+const rowText = r => r.c.name + (r.title ? `（${r.title}）` : '');
 function renderCompare() {
   fillIndustryFilters();
   const metric = METRICS.find(m => m.key === $('#cmp-metric').value) || METRICS[0];
-  const targets = compareTargets();
-  const hasAny = targets.some(hasPosting);
+  const rows = compareTargets();
+  const hasAny = rows.length > 0;
 
   $('#cmp-empty').hidden = hasAny;
   $$('#view-compare .panel').forEach(p => { p.hidden = !hasAny; });
   if (!hasAny) return;
 
-  const withVal = targets.filter(c => c.posting[metric.key] != null);
-  const missing = targets.filter(c => c.posting[metric.key] == null);
-  withVal.sort((a, b) => metric.better === 'low'
-    ? a.posting[metric.key] - b.posting[metric.key]
-    : b.posting[metric.key] - a.posting[metric.key]);
+  const val = r => r.p[metric.key];
+  const cmp = (a, b) => {
+    if (val(a) == null) return val(b) == null ? 0 : 1;
+    if (val(b) == null) return -1;
+    return metric.better === 'low' ? val(a) - val(b) : val(b) - val(a);
+  };
+  const withVal = rows.filter(r => val(r) != null).sort(cmp);
+  const missing = rows.filter(r => val(r) == null);
 
   $('#cmp-title').textContent = `${metric.label}（${metric.unit}）`;
   $('#cmp-sub').textContent = metric.better === 'low' ? '少ない順に表示' : '多い順に表示';
-  const max = Math.max(...withVal.map(c => c.posting[metric.key]), 0);
-  $('#cmp-chart').innerHTML = withVal.length ? withVal.map(c => {
-    const v = c.posting[metric.key];
+  const max = Math.max(...withVal.map(val), 0);
+  $('#cmp-chart').innerHTML = withVal.length ? withVal.map(r => {
+    const v = val(r);
     const pct = max > 0 ? (v / max) * 100 : 0;
-    return `<div class="bar-row" data-id="${c.id}" title="${esc(c.name)}: ${esc(metric.fmt(v))}">
-      <div class="bar-label">${tokyoBadge(c)}<span class="nm">${esc(c.name)}</span></div>
+    return `<div class="bar-row" data-id="${r.c.id}" data-pid="${r.p.id}" title="${esc(rowText(r))}: ${esc(metric.fmt(v))}">
+      <div class="bar-label">${tokyoBadgeCode(r.tk)}<span class="nm">${rowLabel(r)}</span></div>
       <div class="bar-track"><div class="bar-fill" style="width:calc((100% - 76px) * ${(pct / 100).toFixed(4)})"></div><span class="bar-val">${esc(metric.fmt(v))}</span></div>
     </div>`;
   }).join('') + (withVal.length >= 2
-    ? `<div class="bar-avg">平均 ${esc(metric.fmt(roundFor(metric, withVal.reduce((s, c) => s + c.posting[metric.key], 0) / withVal.length)))}（${withVal.length}社）</div>`
+    ? `<div class="bar-avg">平均 ${esc(metric.fmt(roundFor(metric, withVal.reduce((s, r) => s + val(r), 0) / withVal.length)))}（${withVal.length}件）</div>`
     : '')
-    : '<p class="note">この項目が入力された企業はありません。</p>';
-  $('#cmp-missing').textContent = missing.length ? `未入力: ${missing.map(c => c.name).join('、')}` : '';
+    : '<p class="note">この項目が入力された職種はありません。</p>';
+  $('#cmp-missing').textContent = missing.length ? `未入力: ${missing.map(rowText).join('、')}` : '';
 
   // 一覧表（各列でいちばん良い値を強調）
-  const rows = targets.filter(hasPosting);
-  rows.sort((a, b) => {
-    const av = a.posting[metric.key], bv = b.posting[metric.key];
-    if (av == null) return bv == null ? 0 : 1;
-    if (bv == null) return -1;
-    return metric.better === 'low' ? av - bv : bv - av;
-  });
+  const sorted = [...rows].sort(cmp);
   const best = {};
   METRICS.forEach(m => {
-    const vals = rows.map(c => c.posting[m.key]).filter(v => v != null);
+    const vals = sorted.map(r => r.p[m.key]).filter(v => v != null);
     if (vals.length >= 2) best[m.key] = m.better === 'low' ? Math.min(...vals) : Math.max(...vals);
   });
   $('#cmp-table').innerHTML =
-    `<thead><tr><th>企業</th><th>東京</th>${METRICS.map(m => `<th>${m.label}</th>`).join('')}<th>働き方</th><th>職種</th><th>本社</th></tr></thead>
-    <tbody>${rows.map(c => `<tr data-id="${c.id}">
-      <td>${esc(c.name)}</td>
-      <td class="l">${TOKYO[c.tokyo]?.badge || '-'}</td>
+    `<thead><tr><th>企業／職種</th><th>東京</th>${METRICS.map(m => `<th>${m.label}</th>`).join('')}<th>働き方</th><th>勤務地</th><th>本社</th></tr></thead>
+    <tbody>${sorted.map(r => `<tr data-id="${r.c.id}" data-pid="${r.p.id}">
+      <td>${rowLabel(r)}</td>
+      <td class="l">${TOKYO[r.tk]?.badge || '-'}</td>
       ${METRICS.map(m => {
-        const v = c.posting[m.key];
+        const v = r.p[m.key];
         return `<td class="${v != null && v === best[m.key] ? 'best' : ''}">${v == null ? '-' : esc(m.fmt(v))}</td>`;
       }).join('')}
-      <td class="l">${POSTING_FLAGS.filter(f => c.posting[f.key]).map(f => f.label).join('・') || '-'}</td>
-      <td class="l" title="${esc(c.posting.job)}">${esc(c.posting.job.split('\n')[0]) || '-'}</td>
-      <td class="l">${esc(c.hq) || '-'}</td>
+      <td class="l">${POSTING_FLAGS.filter(f => r.p[f.key]).map(f => f.label).join('・') || '-'}</td>
+      <td class="l" title="${esc(r.p.location || r.c.locations)}">${esc((r.p.location || r.c.locations).split('\n')[0]) || '-'}</td>
+      <td class="l">${esc(r.c.hq) || '-'}</td>
     </tr>`).join('')}</tbody>`;
 }
 $('#cmp-chart').addEventListener('click', e => {
   const r = e.target.closest('.bar-row');
-  if (r) openCompany(r.dataset.id);
+  if (r) openCompany(r.dataset.id, r.dataset.pid);
 });
 $('#cmp-table').addEventListener('click', e => {
   const r = e.target.closest('tr[data-id]');
-  if (r) openCompany(r.dataset.id);
+  if (r) openCompany(r.dataset.id, r.dataset.pid);
 });
 
 /* ---------- ログイン ---------- */
@@ -718,17 +755,16 @@ function updateOpenUrl() {
 }
 cForm.url.addEventListener('input', updateOpenUrl);
 
-function openCompany(id) {
+function openCompany(id, postingId) {
   const src = id ? state.companies.find(c => c.id === id) : null;
   editing = src ? structuredClone(src) : normalizeCompany({ name: '', createdAt: Date.now() });
   $('#company-dialog-title').textContent = src ? '企業の詳細' : '企業を追加';
   ['name', 'status', 'hq', 'locations', 'tokyo', 'url', 'loginId', 'memo'].forEach(k => { cForm[k].value = editing[k]; });
   setIndustry(editing.industry);
-  POSTING_TEXT.forEach(k => { cForm['p_' + k].value = editing.posting[k]; });
-  POSTING_NUM.forEach(k => { cForm['p_' + k].value = editing.posting[k] ?? ''; });
-  POSTING_FLAGS.forEach(f => { cForm['p_' + f.key].checked = editing.posting[f.key]; });
-  $('#posting-section').open = hasPosting(editing);
-  showSalaryCandidates();
+  if (!editing.postings.length) editing.postings.push(normalizePosting());
+  curPosting = Math.max(0, editing.postings.findIndex(p => p.id === postingId));
+  loadPostingForm();
+  $('#posting-section').open = hasPosting(editing) || Boolean(postingId);
   setPriority(editing.priority);
   fillRouteSelect(editing.route);
   companyPw.load(editing.pwd);
@@ -839,6 +875,73 @@ $('#guide-body').addEventListener('click', e => {
   gDialog.close();
 });
 
+/* ---------- 職種（募集要項）タブ ---------- */
+let curPosting = 0;
+function loadPostingForm() {
+  const p = editing.postings[curPosting];
+  POSTING_TEXT.forEach(k => { cForm['p_' + k].value = p[k]; });
+  POSTING_NUM.forEach(k => { cForm['p_' + k].value = p[k] ?? ''; });
+  POSTING_FLAGS.forEach(f => { cForm['p_' + f.key].checked = p[f.key]; });
+  cForm.p_tokyo.value = p.tokyo;
+  cForm.p_applied.checked = p.applied;
+  showSalaryCandidates();
+  renderPostingTabs();
+}
+function savePostingForm() {
+  const p = editing.postings[curPosting];
+  if (!p) return;
+  POSTING_TEXT.forEach(k => { p[k] = cForm['p_' + k].value.trim(); });
+  POSTING_NUM.forEach(k => { p[k] = numOrNull(cForm['p_' + k].value); });
+  POSTING_FLAGS.forEach(f => { p[f.key] = cForm['p_' + f.key].checked; });
+  p.tokyo = cForm.p_tokyo.value;
+  p.applied = cForm.p_applied.checked;
+}
+function renderPostingTabs() {
+  const ps = editing.postings;
+  $('#posting-tabs').innerHTML = ps.map((p, i) => {
+    const title = i === curPosting ? (cForm.p_title.value.trim() || postingTitle(p, i)) : postingTitle(p, i);
+    const applied = i === curPosting ? cForm.p_applied.checked : p.applied;
+    return `<button type="button" data-i="${i}" class="${i === curPosting ? 'on' : ''}">${esc(title)}${applied ? ' ✓' : ''}</button>`;
+  }).join('') + '<button type="button" class="add" data-add>＋ 職種を追加</button>';
+  $('#delete-posting').hidden = ps.length <= 1 && !postingHasData(ps[0] || {});
+  const target = $('#paste-target');
+  target.hidden = ps.length <= 1;
+  target.textContent = `→ 選択中の職種「${cForm.p_title.value.trim() || postingTitle(ps[curPosting], curPosting)}」に入力されます`;
+}
+function switchPosting(i) {
+  savePostingForm();
+  curPosting = i;
+  loadPostingForm();
+}
+function addPosting(copy) {
+  savePostingForm();
+  const base = copy ? { ...editing.postings[curPosting], id: '', applied: false, raw: '' } : {};
+  if (copy) base.title = base.title ? base.title + '（コピー）' : '';
+  editing.postings.push(normalizePosting(base));
+  curPosting = editing.postings.length - 1;
+  loadPostingForm();
+  $('#posting-section').open = true;
+  cForm.p_title.focus();
+  cForm.p_title.select();
+}
+$('#posting-tabs').addEventListener('click', e => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  if (b.dataset.add != null) addPosting(false);
+  else if (Number(b.dataset.i) !== curPosting) switchPosting(Number(b.dataset.i));
+});
+$('#copy-posting').addEventListener('click', () => addPosting(true));
+$('#delete-posting').addEventListener('click', () => {
+  const name = cForm.p_title.value.trim() || postingTitle(editing.postings[curPosting], curPosting);
+  if (!confirm(`職種「${name}」の内容を削除しますか？`)) return;
+  editing.postings.splice(curPosting, 1);
+  if (!editing.postings.length) editing.postings.push(normalizePosting());
+  curPosting = Math.min(curPosting, editing.postings.length - 1);
+  loadPostingForm();
+});
+cForm.p_title.addEventListener('input', renderPostingTabs);
+cForm.p_applied.addEventListener('change', renderPostingTabs);
+
 function readCompanyForm() {
   ['name', 'hq', 'locations', 'url', 'loginId'].forEach(k => { editing[k] = cForm[k].value.trim(); });
   editing.industry = currentIndustry();
@@ -848,9 +951,7 @@ function readCompanyForm() {
   editing.route = r === '__new' ? '' : r;
   editing.priority = Number(cForm.priority.value) || 2;
   editing.memo = cForm.memo.value;
-  POSTING_TEXT.forEach(k => { editing.posting[k] = cForm['p_' + k].value.trim(); });
-  POSTING_NUM.forEach(k => { editing.posting[k] = numOrNull(cForm['p_' + k].value); });
-  POSTING_FLAGS.forEach(f => { editing.posting[f.key] = cForm['p_' + f.key].checked; });
+  savePostingForm();
   editing.pwd = companyPw.value();
 }
 
@@ -859,6 +960,7 @@ cForm.addEventListener('submit', async e => {
   readCompanyForm();
   if (!editing.name) { cForm.name.focus(); return; }
   editing.updatedAt = Date.now();
+  editing.postings = editing.postings.filter(postingHasData);
   const idx = state.companies.findIndex(c => c.id === editing.id);
   if (idx >= 0) state.companies[idx] = editing; else state.companies.push(editing);
   save();
@@ -871,7 +973,7 @@ function hasUnsavedChanges() {
   readCompanyForm();
   const orig = state.companies.find(c => c.id === editing.id);
   if (!orig) return Boolean(editing.name || editing.memo || editing.events.length);
-  const strip = o => JSON.stringify({ ...o, updatedAt: 0 });
+  const strip = o => JSON.stringify({ ...o, updatedAt: 0, postings: o.postings.filter(postingHasData) });
   return strip(orig) !== strip(editing);
 }
 function tryCloseCompany() {
@@ -990,7 +1092,8 @@ function applyPosting(auto = false) {
   const parsed = parsePosting(raw);
   const values = {}; // フォーム要素名 → 値
   for (const [field, text] of Object.entries(parsed)) {
-    if (field === 'locations') values.locations = text;
+    // 職種が複数あるときは、その職種の勤務地として入れる
+    if (field === 'locations') values[editing.postings.length > 1 ? 'p_location' : 'locations'] = text;
     else if (field === 'hiring') {
       const n = text.match(/(\d+)\s*(?:名|人)/);
       if (n) values.p_hiring = n[1];

@@ -65,7 +65,7 @@
           </select>
           <select id="cmp-industry" class="industry-filter" aria-label="業界で絞り込み"></select>
         </div>
-        <label class="check-inline"><input id="cmp-tokyo" type="checkbox"> 東京勤務の可能性がある企業のみ（◎・△）</label>
+        <label class="check-inline"><input id="cmp-tokyo" type="checkbox"> 東京勤務の可能性がある職種のみ（◎・△）</label>
       </div>
       <div class="panel chart-panel">
         <h2 id="cmp-title"></h2>
@@ -205,12 +205,32 @@
           <h3 class="form-section first">📋 募集要項を貼り付けて自動入力</h3>
           <p class="note small">採用サイトの「募集要項」をまるごとコピーして、下のボタンを押すか欄に貼り付けるだけで各項目に入力されます。</p>
           <button type="button" id="paste-clipboard" class="btn primary full-w">コピーした募集要項を貼り付け</button>
+          <p id="paste-target" class="note small paste-target" hidden></p>
           <textarea name="p_raw" rows="2" placeholder="ここに直接貼り付けてもOK（貼った瞬間に読み取ります）"></textarea>
           <button type="button" id="parse-posting" class="btn small">もう一度読み取る</button>
         </div>
 
         <details class="posting" id="posting-section">
-          <summary><h3 class="form-section">📄 募集要項（任意）</h3></summary>
+          <summary><h3 class="form-section">📄 職種・募集要項（任意）</h3></summary>
+          <p class="note small">同じ会社でも職種・コースごとに条件が違う場合は、タブを追加して別々に入力できます。</p>
+          <div class="posting-tabs" id="posting-tabs"></div>
+          <div class="grid2">
+            <label>職種・コース名
+              <input name="p_title" autocomplete="off" placeholder="例: 総合職 / SE">
+            </label>
+            <label>東京で働ける？（この職種）
+              <select name="p_tokyo">
+                <option value="">会社の設定と同じ</option>
+                <option value="only">◎ 東京勤務が確実</option>
+                <option value="likely">△ 東京の可能性あり</option>
+                <option value="no">× 東京勤務なし</option>
+              </select>
+            </label>
+          </div>
+          <label>勤務地（この職種）
+            <input name="p_location" autocomplete="off" placeholder="例: 東京本社 / 全国転勤あり / エリア限定（首都圏）">
+          </label>
+          <label class="check-inline applied-check"><input type="checkbox" name="p_applied"> この職種に応募する・応募した</label>
 
 
           <label>募集者・入社する会社
@@ -280,6 +300,10 @@
           <label>その他（選考フロー・必要書類 など）
             <textarea name="p_note" rows="3"></textarea>
           </label>
+          <div class="posting-actions">
+            <button type="button" id="copy-posting" class="btn small">この内容をコピーして職種を追加</button>
+            <button type="button" id="delete-posting" class="btn small danger">この職種を削除</button>
+          </div>
         </details>
 
         <label>メモ（志望動機・面接で聞かれたこと など）
