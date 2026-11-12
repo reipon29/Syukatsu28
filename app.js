@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '1.3.0';
+const APP_VERSION = '1.4.0';
 const STORAGE_KEY = 'syukatsu.v1';
 
 const STATUSES = [
@@ -328,10 +328,31 @@ function fillRouteFilter() {
 }
 
 const UI_KEY = STORAGE_KEY + '.ui';
-const uiControls = ['#filter-status', '#sort', '#filter-tokyo', '#cmp-metric', '#cmp-filter'];
+// 業界の選択肢
+const industryGroupOf = name => INDUSTRY_BY_NAME[name]?.group || (name ? 'その他' : '');
+function fillIndustryFilters() {
+  const groups = INDUSTRY_GROUPS.map(g => g.group);
+  const used = new Set(state.companies.map(c => industryGroupOf(c.industry)));
+  const opts = '<option value="all">業界: すべて</option>' +
+    groups.filter(g => used.has(g)).map(g => `<option value="${g}">業界: ${g}</option>`).join('') +
+    (used.has('その他') ? '<option value="その他">業界: その他</option>' : '') +
+    '<option value="">業界: 未設定</option>';
+  ['#filter-industry', '#cmp-industry'].forEach(sel => {
+    const el = $(sel);
+    const cur = el.value || el.dataset.pref || 'all';
+    el.innerHTML = opts;
+    el.value = [...el.options].some(o => o.value === cur) ? cur : 'all';
+  });
+}
+const matchIndustry = (c, f) => f === 'all' || industryGroupOf(c.industry) === f;
+$('#industry-select').innerHTML = '<option value="">わからない・未設定</option>' +
+  INDUSTRY_GROUPS.map(g => `<optgroup label="${g.group}">${g.items.map(it => `<option value="${it.name}">${it.name}</option>`).join('')}</optgroup>`).join('') +
+  '<option value="__other">その他（自分で入力）</option>';
+
+const uiControls = ['#filter-status', '#sort', '#filter-tokyo', '#cmp-metric', '#cmp-filter', '#filter-industry', '#cmp-industry'];
 try {
   const pref = JSON.parse(localStorage.getItem(UI_KEY) || '{}');
-  uiControls.forEach(sel => { if (pref[sel] != null) $(sel).value = pref[sel]; });
+  uiControls.forEach(sel => { if (pref[sel] != null) { $(sel).value = pref[sel]; $(sel).dataset.pref = pref[sel]; } });
   if (pref.cmpTokyo) $('#cmp-tokyo').checked = true;
 } catch { /* ignore */ }
 function saveUiPref() {
@@ -362,6 +383,8 @@ function matchTokyo(c, f) {
 
 function renderCompanies() {
   fillRouteFilter();
+  fillIndustryFilters();
+  const fi = $('#filter-industry').value;
   const q = $('#search').value.trim().toLowerCase();
   const f = filterSel.value;
   const ft = $('#filter-tokyo').value;
@@ -382,6 +405,7 @@ function renderCompanies() {
     if (f !== 'active' && f !== 'all' && c.status !== f) return false;
     if (!matchTokyo(c, ft)) return false;
     if (fr !== 'all' && c.route !== fr) return false;
+    if (!matchIndustry(c, fi)) return false;
     if (q && !`${c.name} ${c.industry} ${c.hq} ${c.locations} ${c.memo} ${routeName(c)}`.toLowerCase().includes(q)) return false;
     return true;
   });
@@ -494,10 +518,12 @@ $('#schedule-list').addEventListener('click', e => {
 function compareTargets() {
   const f = $('#cmp-filter').value;
   const tokyoOnly = $('#cmp-tokyo').checked;
+  const fi = $('#cmp-industry').value;
   return state.companies.filter(c =>
-    (f === 'all' || ACTIVE_STATUSES.has(c.status)) && (!tokyoOnly || matchTokyo(c, 'ok')));
+    (f === 'all' || ACTIVE_STATUSES.has(c.status)) && (!tokyoOnly || matchTokyo(c, 'ok')) && matchIndustry(c, fi));
 }
 function renderCompare() {
+  fillIndustryFilters();
   const metric = METRICS.find(m => m.key === $('#cmp-metric').value) || METRICS[0];
   const targets = compareTargets();
   const hasAny = targets.some(hasPosting);
@@ -696,7 +722,8 @@ function openCompany(id) {
   const src = id ? state.companies.find(c => c.id === id) : null;
   editing = src ? structuredClone(src) : normalizeCompany({ name: '', createdAt: Date.now() });
   $('#company-dialog-title').textContent = src ? '企業の詳細' : '企業を追加';
-  ['name', 'industry', 'status', 'hq', 'locations', 'tokyo', 'url', 'loginId', 'memo'].forEach(k => { cForm[k].value = editing[k]; });
+  ['name', 'status', 'hq', 'locations', 'tokyo', 'url', 'loginId', 'memo'].forEach(k => { cForm[k].value = editing[k]; });
+  setIndustry(editing.industry);
   POSTING_TEXT.forEach(k => { cForm['p_' + k].value = editing.posting[k]; });
   POSTING_NUM.forEach(k => { cForm['p_' + k].value = editing.posting[k] ?? ''; });
   POSTING_FLAGS.forEach(f => { cForm['p_' + f.key].checked = editing.posting[f.key]; });
@@ -709,8 +736,6 @@ function openCompany(id) {
   updateTokyoHint();
   $('#delete-company').hidden = !src;
 
-  const industries = [...new Set(state.companies.map(c => c.industry).filter(Boolean))];
-  $('#industry-list').innerHTML = industries.map(i => `<option value="${esc(i)}">`).join('');
 
   renderEvents();
   cDialog.showModal();
@@ -741,8 +766,82 @@ $('#event-list').addEventListener('click', e => {
 });
 $('#add-event').addEventListener('click', () => openEvent(null));
 
+/* ---------- 業界の選択・推定 ---------- */
+function setIndustry(name) {
+  const sel = $('#industry-select');
+  if (!name) sel.value = '';
+  else if (INDUSTRY_BY_NAME[name]) sel.value = name;
+  else { sel.value = '__other'; cForm.industryOther.value = name; }
+  if (sel.value !== '__other') cForm.industryOther.value = '';
+  updateIndustryUi();
+}
+function currentIndustry() {
+  const v = $('#industry-select').value;
+  return v === '__other' ? cForm.industryOther.value.trim() : v;
+}
+function industryGuessText() {
+  return [cForm.name.value, cForm.p_job.value, cForm.p_raw.value, cForm.p_recruiter.value].join('\n');
+}
+function updateIndustryUi() {
+  const sel = $('#industry-select');
+  cForm.industryOther.hidden = sel.value !== '__other';
+  const it = INDUSTRY_BY_NAME[sel.value];
+  const info = $('#industry-info');
+  info.hidden = !it;
+  if (it) {
+    info.innerHTML = `<div class="ii-group">${esc(it.group)}</div><div>${esc(it.desc)}</div><div class="ii-jobs">主な仕事: ${esc(it.jobs)}</div>`;
+  }
+  // 募集要項などからの推定（未設定のときだけ候補を出す）
+  const box = $('#industry-suggest');
+  const guesses = sel.value ? [] : guessIndustries(industryGuessText()).slice(0, 3);
+  box.hidden = !guesses.length;
+  box.innerHTML = guesses.length ? '募集要項から推定: ' +
+    guesses.map(g => `<button type="button" data-v="${esc(g.name)}">${esc(g.name)}</button>`).join('') : '';
+}
+$('#industry-select').addEventListener('change', updateIndustryUi);
+$('#industry-suggest').addEventListener('click', e => {
+  const b = e.target.closest('button[data-v]');
+  if (b) setIndustry(b.dataset.v);
+});
+['name', 'p_job'].forEach(n => cForm[n].addEventListener('change', updateIndustryUi));
+
+/* ---------- 業界ガイド ---------- */
+const gDialog = $('#guide-dialog');
+let guidePickable = false;
+function openGuide(pickable) {
+  guidePickable = pickable;
+  const current = pickable ? currentIndustry() : '';
+  const byIndustry = {};
+  state.companies.forEach(c => { if (c.industry) (byIndustry[c.industry] ||= []).push(c); });
+  $('#guide-body').innerHTML =
+    `<p class="note">${pickable ? '当てはまる業界をタップすると選択されます。' : '登録している企業がある業界には企業名が表示されます。'}迷ったら、企業の「主な事業（何を売って利益を得ているか）」で考えるのがコツです。</p>` +
+    INDUSTRY_GROUPS.map(g => `<div class="guide-group"><h3>${esc(g.group)}</h3><p>${esc(g.note)}</p></div>` +
+      g.items.map(it => {
+        const cs = byIndustry[it.name] || [];
+        return `<div class="guide-item ${pickable ? 'pickable' : ''} ${current === it.name ? 'current' : ''}" data-name="${esc(it.name)}">
+          <div class="gi-name"><span>${esc(it.name)}</span>${pickable ? `<span class="gi-pick">${current === it.name ? '選択中' : 'これにする'}</span>` : ''}</div>
+          <div class="gi-desc">${esc(it.desc)}</div>
+          <div class="gi-jobs">主な仕事: ${esc(it.jobs)}</div>
+          ${cs.length ? `<div class="chips">${cs.map(c => `<span>${esc(c.name)}</span>`).join('')}</div>` : ''}
+        </div>`;
+      }).join('')).join('');
+  gDialog.showModal();
+  const cur = $('#guide-body .current');
+  if (cur) cur.scrollIntoView({ block: 'center' });
+  else gDialog.querySelector('.dialog-body').scrollTop = 0;
+}
+$$('[data-open-guide]').forEach(b => b.addEventListener('click', () => openGuide(Boolean(b.closest('#company-dialog')))));
+gDialog.querySelector('[data-close]').addEventListener('click', () => gDialog.close());
+$('#guide-body').addEventListener('click', e => {
+  const item = e.target.closest('.guide-item');
+  if (!item || !guidePickable) return;
+  setIndustry(item.dataset.name);
+  gDialog.close();
+});
+
 function readCompanyForm() {
-  ['name', 'industry', 'hq', 'locations', 'url', 'loginId'].forEach(k => { editing[k] = cForm[k].value.trim(); });
+  ['name', 'hq', 'locations', 'url', 'loginId'].forEach(k => { editing[k] = cForm[k].value.trim(); });
+  editing.industry = currentIndustry();
   editing.status = cForm.status.value;
   editing.tokyo = cForm.tokyo.value;
   const r = cForm.route.value;
@@ -937,7 +1036,12 @@ function applyPosting(auto = false) {
   for (const [n, v] of Object.entries(flags)) if (v && !cForm[n].checked) { cForm[n].checked = true; count++; }
   showSalaryCandidates();
   updateTokyoHint();
-  toast(`${count} 項目を入力しました。内容を確認して保存してください`);
+  let industryMsg = '';
+  if (!$('#industry-select').value) {
+    const g = guessIndustries(industryGuessText())[0];
+    if (g) { setIndustry(g.name); industryMsg = `（業界は「${g.name}」と推定）`; }
+  } else updateIndustryUi();
+  toast(`${count} 項目を入力しました${industryMsg}。内容を確認して保存してください`);
   $('#posting-section').open = true;
   if (sal.length > 1) setTimeout(() => toast(`初任給の候補が ${sal.length} 件あります。自分に当てはまる額をタップしてください`), 2000);
 }

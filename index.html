@@ -39,6 +39,7 @@
             <option value="notno">東京×を除く</option>
           </select>
           <select id="filter-route" aria-label="エントリー経路で絞り込み"></select>
+          <select id="filter-industry" class="industry-filter" aria-label="業界で絞り込み"></select>
         </div>
       </div>
       <div id="summary" class="summary"></div>
@@ -62,6 +63,7 @@
             <option value="active">選考中のみ</option>
             <option value="all">すべて</option>
           </select>
+          <select id="cmp-industry" class="industry-filter" aria-label="業界で絞り込み"></select>
         </div>
         <label class="check-inline"><input id="cmp-tokyo" type="checkbox"> 東京勤務の可能性がある企業のみ（◎・△）</label>
       </div>
@@ -105,6 +107,11 @@
         </div>
       </div>
       <div class="panel">
+        <h2>業界ガイド</h2>
+        <p class="note">就活でよく使われる業界の分類と、それぞれどんな仕事をしているかの説明です。</p>
+        <button class="btn" data-open-guide>業界ガイドを開く</button>
+      </div>
+      <div class="panel">
         <h2>このアプリについて</h2>
         <p class="note">ホーム画面に追加するとアプリとしてオフラインでも使えます。<br>iPhone: Safari の共有ボタン →「ホーム画面に追加」</p>
         <p class="note" id="version"></p>
@@ -140,15 +147,15 @@
         <label>企業名 <span class="req">*</span>
           <input name="name" required autocomplete="off">
         </label>
-        <div class="grid2">
-          <label>業界
-            <input name="industry" list="industry-list" autocomplete="off">
-            <datalist id="industry-list"></datalist>
-          </label>
-          <label>ステータス
-            <select name="status" id="status-select"></select>
-          </label>
-        </div>
+        <label>ステータス
+          <select name="status" id="status-select"></select>
+        </label>
+        <label>業界 <button type="button" class="link inline" data-open-guide>業界ガイドを見る</button>
+          <select name="industry" id="industry-select"></select>
+          <input name="industryOther" autocomplete="off" placeholder="業界名を入力" hidden>
+        </label>
+        <div id="industry-suggest" class="candidates" hidden></div>
+        <div id="industry-info" class="industry-info" hidden></div>
         <label>志望度
           <div class="stars" id="priority-input">
             <button type="button" data-v="1">★</button><button type="button" data-v="2">★</button><button type="button" data-v="3">★</button>
@@ -369,6 +376,17 @@
     </form>
   </dialog>
 
+  <!-- 業界ガイド -->
+  <dialog id="guide-dialog">
+    <div class="dialog-head">
+      <span></span>
+      <h2>業界ガイド</h2>
+      <button type="button" class="link strong" data-close>閉じる</button>
+    </div>
+    <div class="dialog-body" id="guide-body"></div>
+  </dialog>
+
+  <script src="industries.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

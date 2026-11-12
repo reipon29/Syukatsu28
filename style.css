@@ -301,3 +301,24 @@ dialog.small-dialog .dialog-body > label { display: block; font-size: 13px; colo
 .candidates { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; color: var(--muted); margin: -4px 0 12px; }
 .candidates button { border: 1px solid var(--accent); color: var(--accent); background: var(--surface); border-radius: 999px; padding: 3px 10px; font-size: 12px; cursor: pointer; }
 .cmp-table td.l { max-width: 14em; overflow: hidden; text-overflow: ellipsis; }
+
+/* v1.4 業界 */
+.link.inline { font-size: 12px; padding: 0 0 0 8px; }
+.industry-filter { grid-column: 1 / -1; }
+.industry-info { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; margin: -4px 0 12px; font-size: 13px; }
+.industry-info .ii-group { font-size: 11px; color: var(--muted); }
+.industry-info .ii-jobs { color: var(--muted); margin-top: 4px; }
+#guide-dialog .dialog-body { padding-top: 8px; }
+#guide-dialog { display: none; }
+#guide-dialog[open] { display: flex; flex-direction: column; }
+.guide-group { margin: 14px 0 6px; }
+.guide-group h3 { margin: 0; font-size: 16px; }
+.guide-group p { margin: 2px 0 0; font-size: 12px; color: var(--muted); }
+.guide-item { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; margin-bottom: 6px; }
+.guide-item.pickable { cursor: pointer; }
+.guide-item.current { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.guide-item .gi-name { font-weight: 700; display: flex; justify-content: space-between; gap: 8px; }
+.guide-item .gi-pick { font-size: 12px; color: var(--accent); font-weight: 600; white-space: nowrap; }
+.guide-item .gi-desc { font-size: 13px; margin-top: 2px; }
+.guide-item .gi-jobs { font-size: 12px; color: var(--muted); margin-top: 4px; }
+.guide-item .chips { margin-top: 6px; }
