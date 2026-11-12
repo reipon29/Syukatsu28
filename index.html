@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>就活管理</title>
+  <meta name="description" content="就職活動の企業・選考状況・予定を管理するアプリ">
+  <meta name="theme-color" content="#2563eb">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="就活管理">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-180.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1 id="page-title">企業一覧</h1>
+  </header>
+
+  <main>
+    <!-- 企業一覧 -->
+    <section id="view-companies" class="view active">
+      <div class="toolbar">
+        <input id="search" type="search" placeholder="企業名・業界・メモで検索">
+        <div class="toolbar-row">
+          <select id="filter-status" aria-label="ステータスで絞り込み"></select>
+          <select id="sort" aria-label="並び順">
+            <option value="next">次の予定が近い順</option>
+            <option value="priority">志望度順</option>
+            <option value="updated">更新が新しい順</option>
+            <option value="name">企業名順</option>
+          </select>
+        </div>
+      </div>
+      <div id="summary" class="summary"></div>
+      <ul id="company-list" class="card-list"></ul>
+      <p id="company-empty" class="empty" hidden>まだ企業が登録されていません。<br>右下の ＋ から追加しましょう。</p>
+    </section>
+
+    <!-- 予定 -->
+    <section id="view-schedule" class="view">
+      <label class="check-inline"><input id="show-done" type="checkbox"> 完了・過去の予定も表示</label>
+      <div id="schedule-list"></div>
+      <p id="schedule-empty" class="empty" hidden>予定はありません。</p>
+    </section>
+
+    <!-- 設定 -->
+    <section id="view-settings" class="view">
+      <div class="panel">
+        <h2>データ</h2>
+        <p class="note">データはこの端末のブラウザ内にのみ保存されます。機種変更や別端末で使う場合はバックアップを書き出して読み込んでください。</p>
+        <div class="btn-col">
+          <button id="export-btn" class="btn">バックアップを書き出す (JSON)</button>
+          <label class="btn">バックアップを読み込む
+            <input id="import-file" type="file" accept="application/json,.json" hidden>
+          </label>
+          <button id="clear-btn" class="btn danger">すべてのデータを削除</button>
+        </div>
+      </div>
+      <div class="panel">
+        <h2>このアプリについて</h2>
+        <p class="note">ホーム画面に追加するとアプリとしてオフラインでも使えます。<br>iPhone: Safari の共有ボタン →「ホーム画面に追加」</p>
+        <p class="note">※ パスワードは保存しないでください。</p>
+        <p class="note" id="version"></p>
+      </div>
+    </section>
+  </main>
+
+  <button id="fab" class="fab" aria-label="企業を追加">＋</button>
+
+  <nav class="tabbar">
+    <button data-view="companies" class="active"><span class="ico">🏢</span>企業</button>
+    <button data-view="schedule"><span class="ico">📅</span>予定</button>
+    <button data-view="settings"><span class="ico">⚙️</span>設定</button>
+  </nav>
+
+  <!-- 企業詳細 / 編集 -->
+  <dialog id="company-dialog">
+    <form id="company-form" method="dialog">
+      <div class="dialog-head">
+        <button type="button" class="link" data-close>閉じる</button>
+        <h2 id="company-dialog-title">企業を追加</h2>
+        <button type="submit" class="link strong">保存</button>
+      </div>
+      <div class="dialog-body">
+        <label>企業名 <span class="req">*</span>
+          <input name="name" required autocomplete="off">
+        </label>
+        <div class="grid2">
+          <label>業界
+            <input name="industry" list="industry-list" autocomplete="off">
+            <datalist id="industry-list"></datalist>
+          </label>
+          <label>ステータス
+            <select name="status" id="status-select"></select>
+          </label>
+        </div>
+        <label>志望度
+          <div class="stars" id="priority-input">
+            <button type="button" data-v="1">★</button><button type="button" data-v="2">★</button><button type="button" data-v="3">★</button>
+          </div>
+          <input type="hidden" name="priority" value="2">
+        </label>
+        <label>マイページURL
+          <input name="url" type="url" inputmode="url" placeholder="https://">
+          <a id="open-url" class="open-url" target="_blank" rel="noopener" hidden>マイページを開く ↗</a>
+        </label>
+        <label>ログインID（パスワードは保存しないこと）
+          <input name="loginId" autocomplete="off">
+        </label>
+        <label>メモ（志望動機・面接で聞かれたこと など）
+          <textarea name="memo" rows="5"></textarea>
+        </label>
+
+        <div id="events-section">
+          <div class="section-head">
+            <h3>予定・締切</h3>
+            <button type="button" id="add-event" class="btn small">＋ 予定を追加</button>
+          </div>
+          <ul id="event-list" class="event-list"></ul>
+        </div>
+
+        <button type="button" id="delete-company" class="btn danger full">この企業を削除</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- 予定 編集 -->
+  <dialog id="event-dialog">
+    <form id="event-form" method="dialog">
+      <div class="dialog-head">
+        <button type="button" class="link" data-close>キャンセル</button>
+        <h2>予定</h2>
+        <button type="submit" class="link strong">OK</button>
+      </div>
+      <div class="dialog-body">
+        <label>内容 <span class="req">*</span>
+          <input name="title" required list="event-title-list" autocomplete="off" placeholder="例: ES締切 / 一次面接">
+          <datalist id="event-title-list">
+            <option value="説明会"><option value="ES締切"><option value="Webテスト締切"><option value="GD">
+            <option value="一次面接"><option value="二次面接"><option value="最終面接"><option value="インターン"><option value="内定承諾期限">
+          </datalist>
+        </label>
+        <div class="grid2">
+          <label>日付 <span class="req">*</span><input name="date" type="date" required></label>
+          <label>時刻<input name="time" type="time"></label>
+        </div>
+        <label>場所・URL<input name="place" autocomplete="off"></label>
+        <label class="check-inline"><input name="done" type="checkbox"> 完了</label>
+        <button type="button" id="delete-event" class="btn danger full">この予定を削除</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>
