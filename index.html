@@ -17,13 +17,14 @@
 <body>
   <header class="topbar">
     <h1 id="page-title">企業一覧</h1>
+    <button id="lock-btn" class="lock-btn" hidden></button>
   </header>
 
   <main>
     <!-- 企業一覧 -->
     <section id="view-companies" class="view active">
       <div class="toolbar">
-        <input id="search" type="search" placeholder="企業名・業界・メモで検索">
+        <input id="search" type="search" placeholder="企業名・業界・勤務地・メモで検索">
         <div class="toolbar-row">
           <select id="filter-status" aria-label="ステータスで絞り込み"></select>
           <select id="sort" aria-label="並び順">
@@ -32,6 +33,13 @@
             <option value="updated">更新が新しい順</option>
             <option value="name">企業名順</option>
           </select>
+          <select id="filter-tokyo" aria-label="東京勤務で絞り込み">
+            <option value="all">勤務地: すべて</option>
+            <option value="ok">東京◎・△のみ</option>
+            <option value="only">東京◎のみ</option>
+            <option value="notno">東京×を除く</option>
+          </select>
+          <select id="filter-route" aria-label="エントリー経路で絞り込み"></select>
         </div>
       </div>
       <div id="summary" class="summary"></div>
@@ -46,11 +54,49 @@
       <p id="schedule-empty" class="empty" hidden>予定はありません。</p>
     </section>
 
+    <!-- 比較 -->
+    <section id="view-compare" class="view">
+      <div class="toolbar">
+        <div class="toolbar-row">
+          <select id="cmp-metric" aria-label="比較する項目"></select>
+          <select id="cmp-filter" aria-label="対象">
+            <option value="active">選考中のみ</option>
+            <option value="all">すべて</option>
+          </select>
+        </div>
+        <label class="check-inline"><input id="cmp-tokyo" type="checkbox"> 東京勤務の可能性がある企業のみ（◎・△）</label>
+      </div>
+      <div class="panel chart-panel">
+        <h2 id="cmp-title"></h2>
+        <p id="cmp-sub" class="note"></p>
+        <div id="cmp-chart" class="bar-chart"></div>
+        <p id="cmp-missing" class="note"></p>
+      </div>
+      <div class="panel">
+        <h2>募集要項 一覧</h2>
+        <div class="table-wrap"><table id="cmp-table" class="cmp-table"></table></div>
+      </div>
+      <p id="cmp-empty" class="empty" hidden>募集要項が入力された企業がありません。<br>企業の詳細 →「募集要項」から入力できます。</p>
+    </section>
+
+    <!-- ログイン -->
+    <section id="view-login" class="view">
+      <input id="login-search" type="search" placeholder="企業名・サービス名で検索">
+      <div class="section-head">
+        <h3>就活サービス（マイナビ・リクナビ など）</h3>
+        <button id="add-account" class="btn small">＋ 追加</button>
+      </div>
+      <div id="account-list" class="card-list"></div>
+      <div class="section-head"><h3>企業ごとのログイン先</h3></div>
+      <div id="login-company-list" class="card-list"></div>
+      <p class="note" style="margin-top:12px">パスワードはマスターパスワードで暗号化してこの端末内に保存されます。</p>
+    </section>
+
     <!-- 設定 -->
     <section id="view-settings" class="view">
       <div class="panel">
         <h2>データ</h2>
-        <p class="note">データはこの端末のブラウザ内にのみ保存されます。機種変更や別端末で使う場合はバックアップを書き出して読み込んでください。</p>
+        <p class="note">データはこの端末のブラウザ内にのみ保存されます。機種変更や別端末で使う場合はバックアップを書き出して読み込んでください（パスワードは暗号化されたまま書き出されます）。</p>
         <div class="btn-col">
           <button id="export-btn" class="btn">バックアップを書き出す (JSON)</button>
           <label class="btn">バックアップを読み込む
@@ -60,9 +106,16 @@
         </div>
       </div>
       <div class="panel">
+        <h2>マスターパスワード</h2>
+        <p class="note" id="vault-status"></p>
+        <div class="btn-col">
+          <button id="vault-change" class="btn">マスターパスワードを変更</button>
+          <button id="vault-reset" class="btn danger">忘れた場合: 保存済みパスワードを全消去して再設定</button>
+        </div>
+      </div>
+      <div class="panel">
         <h2>このアプリについて</h2>
         <p class="note">ホーム画面に追加するとアプリとしてオフラインでも使えます。<br>iPhone: Safari の共有ボタン →「ホーム画面に追加」</p>
-        <p class="note">※ パスワードは保存しないでください。</p>
         <p class="note" id="version"></p>
       </div>
     </section>
@@ -73,8 +126,16 @@
   <nav class="tabbar">
     <button data-view="companies" class="active"><span class="ico">🏢</span>企業</button>
     <button data-view="schedule"><span class="ico">📅</span>予定</button>
+    <button data-view="compare"><span class="ico">📊</span>比較</button>
+    <button data-view="login"><span class="ico">🔑</span>ログイン</button>
     <button data-view="settings"><span class="ico">⚙️</span>設定</button>
   </nav>
+
+  <datalist id="service-names">
+    <option value="マイナビ"><option value="リクナビ"><option value="ONE CAREER"><option value="OfferBox">
+    <option value="キャリタス就活"><option value="dodaキャンパス"><option value="外資就活ドットコム"><option value="Goodfind">
+    <option value="unistyle"><option value="type就活"><option value="あさがくナビ"><option value="LinkedIn">
+  </datalist>
 
   <!-- 企業詳細 / 編集 -->
   <dialog id="company-dialog">
@@ -103,15 +164,83 @@
           </div>
           <input type="hidden" name="priority" value="2">
         </label>
-        <label>マイページURL
+
+        <h3 class="form-section">📍 勤務地</h3>
+        <label>本社所在地
+          <input name="hq" autocomplete="off" placeholder="例: 東京都千代田区">
+        </label>
+        <label>その他の勤務地・支社・配属先
+          <textarea name="locations" rows="2" placeholder="例: 大阪・名古屋・全国転勤あり / 初期配属は東京"></textarea>
+        </label>
+        <label>東京で働ける？
+          <select name="tokyo">
+            <option value="">不明</option>
+            <option value="only">◎ 東京勤務が確実（東京のみ・勤務地確約）</option>
+            <option value="likely">△ 東京の可能性あり（転勤・配属次第）</option>
+            <option value="no">× 東京勤務なし</option>
+          </select>
+        </label>
+        <p id="tokyo-hint" class="hint" hidden></p>
+
+        <h3 class="form-section">🔑 ログイン</h3>
+        <label>エントリー経路（どこから応募したか）
+          <select name="route" id="route-select"></select>
+        </label>
+        <div id="route-info" class="route-info" hidden></div>
+        <label>企業マイページURL
           <input name="url" type="url" inputmode="url" placeholder="https://">
           <a id="open-url" class="open-url" target="_blank" rel="noopener" hidden>マイページを開く ↗</a>
         </label>
-        <label>ログインID（パスワードは保存しないこと）
-          <input name="loginId" autocomplete="off">
-        </label>
+        <div class="grid2">
+          <label>ログインID
+            <input name="loginId" autocomplete="off" autocapitalize="off" spellcheck="false">
+          </label>
+          <label>パスワード
+            <div class="pw-field" id="company-pw">
+              <input type="password" autocomplete="off" autocapitalize="off" spellcheck="false">
+              <button type="button" data-act="toggle" aria-label="表示切替">👁</button>
+            </div>
+          </label>
+        </div>
+
+        <details class="posting" id="posting-section">
+          <summary><h3 class="form-section">📄 募集要項（任意）</h3></summary>
+          <label>職種・コース
+            <input name="p_job" autocomplete="off" placeholder="例: 総合職 / エンジニア職">
+          </label>
+          <div class="grid2">
+            <label>初任給（月給・円）
+              <input name="p_salary" type="number" inputmode="numeric" min="0" step="1000" placeholder="例 250000">
+            </label>
+            <label>想定年収（万円）
+              <input name="p_annual" type="number" inputmode="decimal" min="0" step="1" placeholder="例 400">
+            </label>
+            <label>賞与（年 ◯ヶ月）
+              <input name="p_bonus" type="number" inputmode="decimal" min="0" step="0.1" placeholder="例 4.5">
+            </label>
+            <label>年間休日（日）
+              <input name="p_holidays" type="number" inputmode="numeric" min="0" step="1" placeholder="例 125">
+            </label>
+            <label>月平均残業（時間）
+              <input name="p_overtime" type="number" inputmode="decimal" min="0" step="1" placeholder="例 20">
+            </label>
+            <label>採用予定人数（人）
+              <input name="p_hiring" type="number" inputmode="numeric" min="0" step="1" placeholder="例 50">
+            </label>
+          </div>
+          <label>勤務時間
+            <input name="p_hours" autocomplete="off" placeholder="例: 9:00〜17:30 / フレックス">
+          </label>
+          <label>福利厚生・手当（住宅手当・リモート など）
+            <textarea name="p_benefits" rows="2"></textarea>
+          </label>
+          <label>その他（選考フロー・必要書類 など）
+            <textarea name="p_note" rows="3"></textarea>
+          </label>
+        </details>
+
         <label>メモ（志望動機・面接で聞かれたこと など）
-          <textarea name="memo" rows="5"></textarea>
+          <textarea name="memo" rows="4"></textarea>
         </label>
 
         <div id="events-section">
@@ -150,6 +279,59 @@
         <label>場所・URL<input name="place" autocomplete="off"></label>
         <label class="check-inline"><input name="done" type="checkbox"> 完了</label>
         <button type="button" id="delete-event" class="btn danger full">この予定を削除</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- 就活サービス アカウント -->
+  <dialog id="account-dialog">
+    <form id="account-form" method="dialog">
+      <div class="dialog-head">
+        <button type="button" class="link" data-close>キャンセル</button>
+        <h2 id="account-dialog-title">サービスを追加</h2>
+        <button type="submit" class="link strong">保存</button>
+      </div>
+      <div class="dialog-body">
+        <label>サービス名 <span class="req">*</span>
+          <input name="name" required list="service-names" autocomplete="off" placeholder="例: マイナビ2028">
+        </label>
+        <label>ログインURL
+          <input name="url" type="url" inputmode="url" placeholder="https://">
+        </label>
+        <label>ログインID・メールアドレス
+          <input name="loginId" autocomplete="off" autocapitalize="off" spellcheck="false">
+        </label>
+        <label>パスワード
+          <div class="pw-field" id="account-pw">
+            <input type="password" autocomplete="off" autocapitalize="off" spellcheck="false">
+            <button type="button" data-act="toggle" aria-label="表示切替">👁</button>
+          </div>
+        </label>
+        <label>メモ
+          <textarea name="memo" rows="2" placeholder="例: 登録メールは大学のアドレス"></textarea>
+        </label>
+        <button type="button" id="delete-account" class="btn danger full">このサービスを削除</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- マスターパスワード -->
+  <dialog id="vault-dialog" class="small-dialog">
+    <form id="vault-form" method="dialog">
+      <div class="dialog-body">
+        <h2 id="vault-title">ロック解除</h2>
+        <p id="vault-desc" class="note"></p>
+        <label>マスターパスワード
+          <input name="pass" type="password" autocomplete="off" required>
+        </label>
+        <label id="vault-confirm-wrap">確認のためもう一度
+          <input name="confirm" type="password" autocomplete="off">
+        </label>
+        <p id="vault-error" class="error" hidden></p>
+        <div class="btn-row">
+          <button type="button" class="btn" data-close>キャンセル</button>
+          <button type="submit" class="btn primary" id="vault-submit">解除</button>
+        </div>
       </div>
     </form>
   </dialog>

@@ -46,6 +46,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
   -webkit-backdrop-filter: blur(10px);
   padding: calc(env(safe-area-inset-top) + 10px) 16px 10px;
 }
+.topbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .topbar h1 { margin: 0; font-size: 22px; }
 
 main { max-width: 720px; margin: 0 auto; padding: 0 16px; }
@@ -139,7 +140,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
 
 .tabbar {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 20;
-  display: grid; grid-template-columns: repeat(3, 1fr);
+  display: grid; grid-template-columns: repeat(5, 1fr);
   height: calc(var(--tab-h) + env(safe-area-inset-bottom));
   padding-bottom: env(safe-area-inset-bottom);
   background: var(--surface); border-top: 1px solid var(--border);
@@ -210,3 +211,77 @@ dialog form { display: flex; flex-direction: column; height: 100%; max-height: i
 .open-url { display: inline-block; margin-top: 6px; color: var(--accent); font-size: 13px; text-decoration: none; }
 .open-url[hidden] { display: none; }
 [hidden] { display: none !important; }
+
+/* ---------- v1.1 ---------- */
+.lock-btn {
+  border: 1px solid var(--border); background: var(--surface); border-radius: 999px;
+  padding: 4px 12px; font-size: 13px; cursor: pointer;
+}
+.badge { flex: none; font-size: 11px; padding: 1px 6px; border-radius: 6px; border: 1px solid var(--border); color: var(--muted); white-space: nowrap; }
+.badge.tk-only { border-color: #16a34a; color: #15803d; font-weight: 700; }
+.badge.tk-likely { border-color: var(--warn); color: var(--warn); font-weight: 600; }
+.badge.tk-no { color: var(--muted); text-decoration: line-through; }
+@media (prefers-color-scheme: dark) { .badge.tk-only { border-color: #34c26b; color: #5ee08a; } }
+
+.form-section { font-size: 15px; margin: 22px 0 10px; padding-top: 14px; border-top: 1px solid var(--border); color: var(--text); }
+.hint { font-size: 12px; color: var(--accent); margin: -6px 0 12px; }
+.error { font-size: 13px; color: var(--danger); margin: 0 0 10px; }
+
+.route-info {
+  background: var(--accent-soft); border-radius: 10px; padding: 8px 12px; margin: -4px 0 12px;
+  font-size: 13px; display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center;
+}
+.route-info a, .route-info button { color: var(--accent); background: none; border: none; padding: 0; font-size: 13px; cursor: pointer; text-decoration: none; }
+
+.pw-field { position: relative; margin-top: 4px; }
+.pw-field input { margin-top: 0 !important; padding-right: 40px; }
+.pw-field input[readonly] { color: var(--muted); }
+.pw-field button { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); background: none; border: none; font-size: 16px; padding: 6px; cursor: pointer; }
+
+details.posting { margin-bottom: 12px; }
+details.posting summary { list-style: none; cursor: pointer; }
+details.posting summary::-webkit-details-marker { display: none; }
+details.posting summary h3::after { content: '▸ 開く'; float: right; font-size: 12px; font-weight: 400; color: var(--accent); }
+details.posting[open] summary h3::after { content: '▾ 閉じる'; }
+details.posting > label, details.posting .grid2 > label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 12px; }
+details.posting label input, details.posting label textarea { margin-top: 4px; color: var(--text); }
+
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn-row { display: flex; gap: 8px; justify-content: flex-end; }
+dialog.small-dialog { height: fit-content; max-height: 90dvh; max-width: 400px; margin: auto; border-radius: 16px; width: calc(100% - 32px); }
+dialog.small-dialog form { height: auto; }
+dialog.small-dialog h2 { margin: 0 0 8px; font-size: 17px; }
+
+/* login tab */
+#login-search { margin-bottom: 4px; }
+.login-card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 12px 14px; display: grid; gap: 6px; }
+.login-card .lc-top { display: flex; align-items: center; gap: 8px; }
+.login-card .lc-name { font-weight: 700; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.login-card .lc-sub { font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
+.login-card .lc-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.login-card .lc-actions a, .login-card .lc-actions button {
+  font-size: 13px; padding: 5px 10px; border-radius: 8px; border: 1px solid var(--border);
+  background: var(--bg); color: var(--text); text-decoration: none; cursor: pointer;
+}
+.chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.chips span { font-size: 12px; background: var(--bg); border-radius: 6px; padding: 1px 6px; cursor: pointer; }
+
+/* compare */
+.chart-panel h2 { margin-bottom: 2px; }
+.bar-chart { display: grid; gap: 6px; margin: 10px 0 6px; }
+.bar-row { display: grid; grid-template-columns: minmax(0, 38%) 1fr; gap: 8px; align-items: center; cursor: pointer; padding: 2px 0; }
+.bar-row:hover .bar-fill { filter: brightness(1.1); }
+.bar-label { font-size: 13px; display: flex; gap: 4px; align-items: center; min-width: 0; }
+.bar-label .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bar-track { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.bar-fill { height: 18px; background: var(--accent); border-radius: 0 4px 4px 0; min-width: 2px; }
+.bar-val { font-size: 12px; color: var(--text); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.bar-avg { font-size: 12px; color: var(--muted); border-top: 1px dashed var(--border); padding-top: 6px; }
+.table-wrap { overflow-x: auto; margin: 0 -4px; }
+.cmp-table { border-collapse: collapse; font-size: 13px; min-width: 100%; }
+.cmp-table th, .cmp-table td { padding: 6px 8px; border-bottom: 1px solid var(--border); text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.cmp-table th { color: var(--muted); font-weight: 600; font-size: 12px; }
+.cmp-table th:first-child, .cmp-table td:first-child { text-align: left; position: sticky; left: 0; background: var(--surface); max-width: 9em; overflow: hidden; text-overflow: ellipsis; }
+.cmp-table td.l { text-align: left; }
+.cmp-table tbody tr { cursor: pointer; }
+.cmp-table .best { font-weight: 700; color: var(--accent); }

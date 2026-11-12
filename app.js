@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '1.1.0';
 const STORAGE_KEY = 'syukatsu.v1';
 
 const STATUSES = [
@@ -19,18 +19,88 @@ const STATUSES = [
 const STATUS_MAP = Object.fromEntries(STATUSES.map(s => [s.id, s]));
 const ACTIVE_STATUSES = new Set(STATUSES.filter(s => !['declined', 'rejected'].includes(s.id)).map(s => s.id));
 
-/* ---------- storage ---------- */
-let state = load();
+const TOKYO = {
+  only:   { badge: '東京◎', cls: 'tk-only',   label: '東京勤務が確実' },
+  likely: { badge: '東京△', cls: 'tk-likely', label: '東京の可能性あり' },
+  no:     { badge: '東京×', cls: 'tk-no',     label: '東京勤務なし' },
+};
 
+// 比較できる数値項目（better: 大きいほど良い=high / 小さいほど良い=low）
+const METRICS = [
+  { key: 'salary',   label: '初任給（月給）',  unit: '円',   better: 'high', fmt: v => v.toLocaleString('ja-JP') + '円' },
+  { key: 'annual',   label: '想定年収',        unit: '万円', better: 'high', fmt: v => v.toLocaleString('ja-JP') + '万円' },
+  { key: 'bonus',    label: '賞与',            unit: 'ヶ月', better: 'high', fmt: v => v + 'ヶ月' },
+  { key: 'holidays', label: '年間休日',        unit: '日',   better: 'high', fmt: v => v + '日' },
+  { key: 'overtime', label: '月平均残業',      unit: '時間', better: 'low',  fmt: v => v + '時間' },
+  { key: 'hiring',   label: '採用予定人数',    unit: '人',   better: 'high', fmt: v => v.toLocaleString('ja-JP') + '人' },
+];
+const roundFor = (m, v) => (['bonus', 'overtime'].includes(m.key) ? Math.round(v * 10) / 10 : Math.round(v));
+const POSTING_TEXT = ['job', 'hours', 'benefits', 'note'];
+const POSTING_NUM = METRICS.map(m => m.key);
+
+/* ---------- storage ---------- */
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+const str = v => (v == null ? '' : String(v));
+const numOrNull = v => (v === '' || v == null || !Number.isFinite(Number(v)) ? null : Number(v));
+const isCipher = v => v && typeof v === 'object' && typeof v.iv === 'string' && typeof v.ct === 'string';
+
+function normalizeEvent(ev) {
+  return { id: str(ev.id) || uid(), title: str(ev.title), date: ev.date, time: str(ev.time), place: str(ev.place), done: Boolean(ev.done) };
+}
+function normalizeCompany(c) {
+  const p = c.posting && typeof c.posting === 'object' ? c.posting : {};
+  const posting = {};
+  POSTING_TEXT.forEach(k => { posting[k] = str(p[k]); });
+  POSTING_NUM.forEach(k => { posting[k] = numOrNull(p[k]); });
+  return {
+    id: str(c.id) || uid(),
+    name: str(c.name),
+    industry: str(c.industry),
+    status: STATUS_MAP[c.status] ? c.status : 'interest',
+    priority: [1, 2, 3].includes(Number(c.priority)) ? Number(c.priority) : 2,
+    hq: str(c.hq),
+    locations: str(c.locations),
+    tokyo: TOKYO[c.tokyo] ? c.tokyo : '',
+    route: str(c.route),
+    url: str(c.url),
+    loginId: str(c.loginId),
+    pwd: isCipher(c.pwd) ? { iv: c.pwd.iv, ct: c.pwd.ct } : null,
+    posting,
+    memo: str(c.memo),
+    events: (Array.isArray(c.events) ? c.events : [])
+      .filter(ev => ev && ev.title && /^\d{4}-\d{2}-\d{2}$/.test(ev.date))
+      .map(normalizeEvent),
+    createdAt: Number(c.createdAt) || Date.now(),
+    updatedAt: Number(c.updatedAt) || Date.now(),
+  };
+}
+function normalizeAccount(a) {
+  return {
+    id: str(a.id) || uid(),
+    name: str(a.name),
+    url: str(a.url),
+    loginId: str(a.loginId),
+    pwd: isCipher(a.pwd) ? { iv: a.pwd.iv, ct: a.pwd.ct } : null,
+    memo: str(a.memo),
+  };
+}
+function normalizeState(d) {
+  const accounts = (Array.isArray(d.accounts) ? d.accounts : []).filter(a => a && a.name).map(normalizeAccount);
+  const ids = new Set(accounts.map(a => a.id));
+  const companies = (Array.isArray(d.companies) ? d.companies : []).filter(c => c && typeof c.name === 'string').map(normalizeCompany);
+  companies.forEach(c => { if (c.route && c.route !== 'own' && !ids.has(c.route)) c.route = ''; });
+  const v = d.vault;
+  const vault = v && typeof v.salt === 'string' && isCipher(v.check) ? { salt: v.salt, check: v.check } : null;
+  return { companies, accounts, vault };
+}
+
+let state = load();
 function load() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) {
-      const data = JSON.parse(raw);
-      if (Array.isArray(data.companies)) return data;
-    }
+    if (raw) return normalizeState(JSON.parse(raw));
   } catch (e) { console.error(e); }
-  return { companies: [] };
+  return { companies: [], accounts: [], vault: null };
 }
 function save() {
   try {
@@ -39,12 +109,12 @@ function save() {
     alert('保存に失敗しました: ' + e.message);
   }
 }
-const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 
 /* ---------- helpers ---------- */
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const safeUrl = u => (/^https?:\/\//i.test(u || '') ? u : '');
 
 function todayStr() {
   const d = new Date();
@@ -68,13 +138,21 @@ function relLabel(dateStr) {
   if (n > 1) return `${n}日後`;
   return `${-n}日前`;
 }
+const evKey = e => e.date + (e.time || '99');
 function nextEvent(c) {
   const today = todayStr();
-  return c.events
-    .filter(e => !e.done && e.date >= today)
-    .sort((a, b) => (a.date + (a.time || '99')).localeCompare(b.date + (b.time || '99')))[0];
+  return c.events.filter(e => !e.done && e.date >= today).sort((a, b) => evKey(a).localeCompare(evKey(b)))[0];
 }
 function stars(n) { return '★'.repeat(n) + '☆'.repeat(3 - n); }
+function tokyoBadge(c) {
+  const t = TOKYO[c.tokyo];
+  return t ? `<span class="badge ${t.cls}" title="${t.label}">${t.badge}</span>` : '';
+}
+function accountById(id) { return state.accounts.find(a => a.id === id); }
+function routeName(c) {
+  if (c.route === 'own') return '企業HP';
+  return accountById(c.route)?.name || '';
+}
 
 function toast(msg) {
   let el = $('.toast');
@@ -84,6 +162,15 @@ function toast(msg) {
   clearTimeout(toast.t);
   toast.t = setTimeout(() => el.classList.remove('show'), 1800);
 }
+async function copyText(text, label) {
+  if (!text) { toast(`${label}が未登録です`); return; }
+  try {
+    await navigator.clipboard.writeText(text);
+    toast(`${label}をコピーしました`);
+  } catch {
+    prompt(`${label}（コピーしてください）`, text);
+  }
+}
 
 function gcalUrl(ev, companyName) {
   const d = ev.date.replace(/-/g, '');
@@ -91,26 +178,184 @@ function gcalUrl(ev, companyName) {
   if (ev.time) {
     const [h, m] = ev.time.split(':').map(Number);
     const start = `${d}T${String(h).padStart(2, '0')}${String(m).padStart(2, '0')}00`;
-    const endH = h + 1;
-    // 23時台の予定は終了を 23:59 に丸める
-    const end = endH >= 24 ? `${d}T235900` : `${d}T${String(endH).padStart(2, '0')}${String(m).padStart(2, '0')}00`;
+    const end = h + 1 >= 24 ? `${d}T235900` : `${d}T${String(h + 1).padStart(2, '0')}${String(m).padStart(2, '0')}00`;
     dates = `${start}/${end}`;
   } else {
     const [y, mo, da] = ev.date.split('-').map(Number);
     const next = new Date(y, mo - 1, da + 1);
     dates = `${d}/${next.getFullYear()}${String(next.getMonth() + 1).padStart(2, '0')}${String(next.getDate()).padStart(2, '0')}`;
   }
-  const p = new URLSearchParams({
-    action: 'TEMPLATE',
-    text: `【${companyName}】${ev.title}`,
-    dates,
-    location: ev.place || '',
-  });
+  const p = new URLSearchParams({ action: 'TEMPLATE', text: `【${companyName}】${ev.title}`, dates, location: ev.place || '' });
   return `https://calendar.google.com/calendar/render?${p}`;
 }
 
+/* ---------- vault（パスワード暗号化） ---------- */
+// マスターパスワードから PBKDF2 で鍵を作り、AES-GCM で暗号化。鍵はメモリ上にのみ保持。
+const vault = { key: null, hiddenAt: 0 };
+const AUTO_LOCK_MS = 5 * 60 * 1000;
+const VAULT_CHECK = 'syukatsu-vault-ok';
+const b64 = buf => btoa(String.fromCharCode(...new Uint8Array(buf)));
+const unb64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+
+async function deriveKey(pass, saltB64) {
+  const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(pass), 'PBKDF2', false, ['deriveKey']);
+  return crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt: unb64(saltB64), iterations: 310000, hash: 'SHA-256' },
+    base, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+}
+async function encryptWith(key, text) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(text));
+  return { iv: b64(iv), ct: b64(ct) };
+}
+async function decryptWith(key, obj) {
+  const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64(obj.iv) }, key, unb64(obj.ct));
+  return new TextDecoder().decode(pt);
+}
+const encrypt = text => encryptWith(vault.key, text);
+const decrypt = obj => decryptWith(vault.key, obj);
+
+function lockVault() {
+  vault.key = null;
+  updateLockBtn();
+}
+function updateLockBtn() {
+  const btn = $('#lock-btn');
+  btn.hidden = !state.vault || !['login', 'settings'].includes(currentView);
+  btn.textContent = vault.key ? '🔓 ロックする' : '🔒 ロック中';
+}
+$('#lock-btn').addEventListener('click', async () => {
+  if (vault.key) { lockVault(); toast('ロックしました'); render(); }
+  else if (await ensureUnlocked()) render();
+});
+
+const vDialog = $('#vault-dialog');
+const vForm = $('#vault-form');
+let vaultResolve = null;
+let vaultMode = 'unlock'; // unlock | setup | change
+
+function openVaultDialog(mode) {
+  vaultMode = mode;
+  const titles = { unlock: 'ロック解除', setup: 'マスターパスワードを設定', change: '新しいマスターパスワード' };
+  const descs = {
+    unlock: 'パスワードを表示・編集するにはマスターパスワードを入力してください。',
+    setup: 'ログインパスワードを暗号化して保存するための「マスターパスワード」を決めてください。忘れると保存したパスワードは復元できません。',
+    change: '新しいマスターパスワードを入力してください。保存済みのパスワードはすべて新しいマスターパスワードで暗号化し直されます。',
+  };
+  $('#vault-title').textContent = titles[mode];
+  $('#vault-desc').textContent = descs[mode];
+  $('#vault-confirm-wrap').hidden = mode === 'unlock';
+  vForm.confirm.required = mode !== 'unlock';
+  $('#vault-submit').textContent = mode === 'unlock' ? '解除' : '設定';
+  $('#vault-error').hidden = true;
+  vForm.reset();
+  vDialog.showModal();
+  setTimeout(() => vForm.pass.focus(), 50);
+  return new Promise(res => { vaultResolve = res; });
+}
+function closeVault(result) {
+  vDialog.close();
+  const r = vaultResolve; vaultResolve = null;
+  r?.(result);
+}
+vDialog.querySelector('[data-close]').addEventListener('click', () => closeVault(false));
+vDialog.addEventListener('cancel', e => { e.preventDefault(); closeVault(false); });
+vForm.addEventListener('submit', async e => {
+  e.preventDefault();
+  const pass = vForm.pass.value;
+  const err = $('#vault-error');
+  const showErr = m => { err.textContent = m; err.hidden = false; };
+  if (vaultMode === 'unlock') {
+    try {
+      const key = await deriveKey(pass, state.vault.salt);
+      if (await decryptWith(key, state.vault.check) !== VAULT_CHECK) throw new Error();
+      vault.key = key;
+      updateLockBtn();
+      closeVault(true);
+    } catch {
+      showErr('マスターパスワードが違います');
+    }
+    return;
+  }
+  if (pass.length < 4) return showErr('4文字以上にしてください');
+  if (pass !== vForm.confirm.value) return showErr('確認用と一致しません');
+  const salt = b64(crypto.getRandomValues(new Uint8Array(16)));
+  const key = await deriveKey(pass, salt);
+  if (vaultMode === 'change') {
+    // 全パスワードを新しい鍵で暗号化し直す
+    const reenc = async obj => (obj ? encryptWith(key, await decrypt(obj)) : null);
+    for (const c of state.companies) c.pwd = await reenc(c.pwd);
+    for (const a of state.accounts) a.pwd = await reenc(a.pwd);
+  }
+  state.vault = { salt, check: await encryptWith(key, VAULT_CHECK) };
+  vault.key = key;
+  save();
+  updateLockBtn();
+  closeVault(true);
+  toast(vaultMode === 'change' ? 'マスターパスワードを変更しました' : 'マスターパスワードを設定しました');
+});
+
+async function ensureUnlocked() {
+  if (vault.key) return true;
+  if (!crypto?.subtle) { alert('この環境では暗号化が使えません（https で開いてください）'); return false; }
+  return openVaultDialog(state.vault ? 'unlock' : 'setup');
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) { vault.hiddenAt = Date.now(); return; }
+  if (vault.key && vault.hiddenAt && Date.now() - vault.hiddenAt > AUTO_LOCK_MS) lockVault();
+  render();
+});
+
+/** パスワード入力欄。ロック中は伏せたまま、タップで解除して表示・編集できる */
+function makePwField(root) {
+  const input = root.querySelector('input');
+  let cipher = null, dirty = false, loaded = false, busy = false;
+  async function reveal() {
+    if (loaded) return true;
+    if (busy) return false;
+    busy = true;
+    try {
+      if (!await ensureUnlocked()) return false;
+      input.value = cipher ? await decrypt(cipher) : '';
+      loaded = true;
+      input.readOnly = false;
+      input.placeholder = '';
+      return true;
+    } catch {
+      toast('パスワードを復号できませんでした');
+      return false;
+    } finally { busy = false; }
+  }
+  input.addEventListener('click', async () => { if (!loaded && await reveal()) input.focus(); });
+  input.addEventListener('input', () => { dirty = true; });
+  root.querySelector('[data-act=toggle]').addEventListener('click', async () => {
+    if (!await reveal()) return;
+    input.type = input.type === 'password' ? 'text' : 'password';
+  });
+  return {
+    load(c) {
+      cipher = c; dirty = false; loaded = false;
+      input.value = ''; input.type = 'password'; input.readOnly = true;
+      input.placeholder = c ? '🔒 保存済み（タップで表示）' : 'タップして入力';
+      if (vault.key && c) reveal();
+      else if (vault.key) { loaded = true; input.readOnly = false; input.placeholder = ''; }
+    },
+    get dirty() { return dirty; },
+    async value() {
+      if (!dirty) return cipher;
+      return input.value ? encrypt(input.value) : null;
+    },
+  };
+}
+async function copyPassword(cipher) {
+  if (!cipher) { toast('パスワードが未登録です'); return; }
+  if (!await ensureUnlocked()) return;
+  copyText(await decrypt(cipher), 'パスワード');
+}
+
 /* ---------- navigation ---------- */
-const TITLES = { companies: '企業一覧', schedule: '予定', settings: '設定' };
+const TITLES = { companies: '企業一覧', schedule: '予定', compare: '比較', login: 'ログイン情報', settings: '設定' };
 let currentView = 'companies';
 function showView(name) {
   currentView = name;
@@ -129,34 +374,59 @@ filterSel.innerHTML =
   '<option value="active">選考中のみ</option><option value="all">すべて</option>' +
   STATUSES.map(s => `<option value="${s.id}">${s.label}</option>`).join('');
 $('#status-select').innerHTML = STATUSES.map(s => `<option value="${s.id}">${s.label}</option>`).join('');
+$('#cmp-metric').innerHTML = METRICS.map(m => `<option value="${m.key}">${m.label}</option>`).join('');
 
-try {
-  const pref = JSON.parse(localStorage.getItem(STORAGE_KEY + '.ui') || '{}');
-  if (pref.filter) filterSel.value = pref.filter;
-  if (pref.sort) $('#sort').value = pref.sort;
-} catch { /* ignore */ }
-function saveUiPref() {
-  try { localStorage.setItem(STORAGE_KEY + '.ui', JSON.stringify({ filter: filterSel.value, sort: $('#sort').value })); } catch { /* ignore */ }
+function fillRouteFilter() {
+  const sel = $('#filter-route');
+  const cur = sel.value || 'all';
+  sel.innerHTML = '<option value="all">経路: すべて</option>' +
+    state.accounts.map(a => `<option value="${a.id}">経路: ${esc(a.name)}</option>`).join('') +
+    '<option value="own">経路: 企業HP</option><option value="">経路: 未設定</option>';
+  sel.value = [...sel.options].some(o => o.value === cur) ? cur : 'all';
 }
 
+const UI_KEY = STORAGE_KEY + '.ui';
+const uiControls = ['#filter-status', '#sort', '#filter-tokyo', '#cmp-metric', '#cmp-filter'];
+try {
+  const pref = JSON.parse(localStorage.getItem(UI_KEY) || '{}');
+  uiControls.forEach(sel => { if (pref[sel] != null) $(sel).value = pref[sel]; });
+  if (pref.cmpTokyo) $('#cmp-tokyo').checked = true;
+} catch { /* ignore */ }
+function saveUiPref() {
+  const pref = { cmpTokyo: $('#cmp-tokyo').checked };
+  uiControls.forEach(sel => { pref[sel] = $(sel).value; });
+  try { localStorage.setItem(UI_KEY, JSON.stringify(pref)); } catch { /* ignore */ }
+}
 $('#search').addEventListener('input', render);
-filterSel.addEventListener('change', () => { saveUiPref(); render(); });
-$('#sort').addEventListener('change', () => { saveUiPref(); render(); });
+$('#login-search').addEventListener('input', render);
+[...uiControls, '#cmp-tokyo', '#filter-route'].forEach(sel => $(sel).addEventListener('change', () => { saveUiPref(); render(); }));
 $('#show-done').addEventListener('change', render);
 
 /* ---------- render ---------- */
 function render() {
+  updateLockBtn();
   if (currentView === 'companies') renderCompanies();
   else if (currentView === 'schedule') renderSchedule();
-  else if (currentView === 'settings') $('#version').textContent = 'バージョン ' + APP_VERSION;
+  else if (currentView === 'compare') renderCompare();
+  else if (currentView === 'login') renderLogin();
+  else if (currentView === 'settings') renderSettings();
+}
+
+function matchTokyo(c, f) {
+  if (f === 'ok') return c.tokyo === 'only' || c.tokyo === 'likely';
+  if (f === 'only') return c.tokyo === 'only';
+  if (f === 'notno') return c.tokyo !== 'no';
+  return true;
 }
 
 function renderCompanies() {
+  fillRouteFilter();
   const q = $('#search').value.trim().toLowerCase();
   const f = filterSel.value;
+  const ft = $('#filter-tokyo').value;
+  const fr = $('#filter-route').value;
   const sort = $('#sort').value;
 
-  // summary chips
   const counts = {};
   state.companies.forEach(c => { counts[c.status] = (counts[c.status] || 0) + 1; });
   const activeCount = state.companies.filter(c => ACTIVE_STATUSES.has(c.status)).length;
@@ -166,21 +436,23 @@ function renderCompanies() {
     STATUSES.filter(s => counts[s.id]).map(s =>
       `<button data-f="${s.id}" class="${f === s.id ? 'on' : ''}">${s.label} ${counts[s.id]}</button>`).join('');
 
-  let list = state.companies.filter(c => {
+  const list = state.companies.filter(c => {
     if (f === 'active' && !ACTIVE_STATUSES.has(c.status)) return false;
     if (f !== 'active' && f !== 'all' && c.status !== f) return false;
-    if (q && !`${c.name} ${c.industry} ${c.memo}`.toLowerCase().includes(q)) return false;
+    if (!matchTokyo(c, ft)) return false;
+    if (fr !== 'all' && c.route !== fr) return false;
+    if (q && !`${c.name} ${c.industry} ${c.hq} ${c.locations} ${c.memo} ${routeName(c)}`.toLowerCase().includes(q)) return false;
     return true;
   });
 
-  const nextKey = c => { const e = nextEvent(c); return e ? e.date + (e.time || '99') : '9999'; };
+  const nextKey = c => { const e = nextEvent(c); return e ? evKey(e) : '9999'; };
   const sorters = {
     next: (a, b) => nextKey(a).localeCompare(nextKey(b)) || b.priority - a.priority,
     priority: (a, b) => b.priority - a.priority || nextKey(a).localeCompare(nextKey(b)),
     updated: (a, b) => b.updatedAt - a.updatedAt,
     name: (a, b) => a.name.localeCompare(b.name, 'ja'),
   };
-  list.sort(sorters[sort]);
+  list.sort(sorters[sort] || sorters.next);
 
   $('#company-list').innerHTML = list.map(c => {
     const st = STATUS_MAP[c.status] || STATUSES[0];
@@ -191,14 +463,18 @@ function renderCompanies() {
       const cls = n === 0 ? 'today' : n <= 3 ? 'soon' : '';
       nextHtml = `<div class="card-next ${cls}">📌 ${esc(ne.title)}・${fmtDate(ne.date)}${ne.time ? ' ' + ne.time : ''}（${relLabel(ne.date)}）</div>`;
     }
+    const rn = routeName(c);
     return `<li class="card" data-id="${c.id}">
       <div class="card-top">
         <span class="card-name">${esc(c.name)}</span>
+        ${tokyoBadge(c)}
         <span class="chip ${st.cls}">${st.label}</span>
       </div>
       <div class="card-sub">
         <span class="stars-view">${stars(c.priority)}</span>
         ${c.industry ? `<span>${esc(c.industry)}</span>` : ''}
+        ${c.hq ? `<span>本社: ${esc(c.hq)}</span>` : ''}
+        ${rn ? `<span>経路: ${esc(rn)}</span>` : ''}
       </div>
       ${nextHtml}
     </li>`;
@@ -230,7 +506,7 @@ function renderSchedule() {
     if (!showAll && (ev.done || ev.date < today)) return;
     items.push({ c, ev });
   }));
-  items.sort((a, b) => (a.ev.date + (a.ev.time || '99')).localeCompare(b.ev.date + (b.ev.time || '99')));
+  items.sort((a, b) => evKey(a.ev).localeCompare(evKey(b.ev)));
 
   const groups = new Map();
   items.forEach(it => {
@@ -257,7 +533,6 @@ function renderSchedule() {
   }).join('');
   $('#schedule-empty').hidden = items.length > 0;
 }
-
 $('#schedule-list').addEventListener('change', e => {
   const cb = e.target.closest('input[type=checkbox]');
   if (!cb) return;
@@ -274,11 +549,168 @@ $('#schedule-list').addEventListener('click', e => {
   if (m) openCompany(m.dataset.cid);
 });
 
+/* ---------- 比較 ---------- */
+function compareTargets() {
+  const f = $('#cmp-filter').value;
+  const tokyoOnly = $('#cmp-tokyo').checked;
+  return state.companies.filter(c =>
+    (f === 'all' || ACTIVE_STATUSES.has(c.status)) && (!tokyoOnly || matchTokyo(c, 'ok')));
+}
+function renderCompare() {
+  const metric = METRICS.find(m => m.key === $('#cmp-metric').value) || METRICS[0];
+  const targets = compareTargets();
+  const hasAny = targets.some(c => POSTING_NUM.some(k => c.posting[k] != null) || c.posting.job);
+
+  $('#cmp-empty').hidden = hasAny;
+  $$('#view-compare .panel').forEach(p => { p.hidden = !hasAny; });
+  if (!hasAny) return;
+
+  const withVal = targets.filter(c => c.posting[metric.key] != null);
+  const missing = targets.filter(c => c.posting[metric.key] == null);
+  withVal.sort((a, b) => metric.better === 'low'
+    ? a.posting[metric.key] - b.posting[metric.key]
+    : b.posting[metric.key] - a.posting[metric.key]);
+
+  $('#cmp-title').textContent = `${metric.label}（${metric.unit}）`;
+  $('#cmp-sub').textContent = metric.better === 'low' ? '少ない順に表示' : '多い順に表示';
+  const max = Math.max(...withVal.map(c => c.posting[metric.key]), 0);
+  $('#cmp-chart').innerHTML = withVal.length ? withVal.map(c => {
+    const v = c.posting[metric.key];
+    const pct = max > 0 ? (v / max) * 100 : 0;
+    return `<div class="bar-row" data-id="${c.id}" title="${esc(c.name)}: ${esc(metric.fmt(v))}">
+      <div class="bar-label">${tokyoBadge(c)}<span class="nm">${esc(c.name)}</span></div>
+      <div class="bar-track"><div class="bar-fill" style="width:calc((100% - 76px) * ${(pct / 100).toFixed(4)})"></div><span class="bar-val">${esc(metric.fmt(v))}</span></div>
+    </div>`;
+  }).join('') + (withVal.length >= 2
+    ? `<div class="bar-avg">平均 ${esc(metric.fmt(roundFor(metric, withVal.reduce((s, c) => s + c.posting[metric.key], 0) / withVal.length)))}（${withVal.length}社）</div>`
+    : '')
+    : '<p class="note">この項目が入力された企業はありません。</p>';
+  $('#cmp-missing').textContent = missing.length ? `未入力: ${missing.map(c => c.name).join('、')}` : '';
+
+  // 一覧表（各列でいちばん良い値を強調）
+  const rows = targets.filter(c => POSTING_NUM.some(k => c.posting[k] != null) || c.posting.job);
+  rows.sort((a, b) => {
+    const av = a.posting[metric.key], bv = b.posting[metric.key];
+    if (av == null) return bv == null ? 0 : 1;
+    if (bv == null) return -1;
+    return metric.better === 'low' ? av - bv : bv - av;
+  });
+  const best = {};
+  METRICS.forEach(m => {
+    const vals = rows.map(c => c.posting[m.key]).filter(v => v != null);
+    if (vals.length >= 2) best[m.key] = m.better === 'low' ? Math.min(...vals) : Math.max(...vals);
+  });
+  $('#cmp-table').innerHTML =
+    `<thead><tr><th>企業</th><th>東京</th>${METRICS.map(m => `<th>${m.label}</th>`).join('')}<th>職種</th><th>本社</th></tr></thead>
+    <tbody>${rows.map(c => `<tr data-id="${c.id}">
+      <td>${esc(c.name)}</td>
+      <td class="l">${TOKYO[c.tokyo]?.badge || '-'}</td>
+      ${METRICS.map(m => {
+        const v = c.posting[m.key];
+        return `<td class="${v != null && v === best[m.key] ? 'best' : ''}">${v == null ? '-' : esc(m.fmt(v))}</td>`;
+      }).join('')}
+      <td class="l">${esc(c.posting.job) || '-'}</td>
+      <td class="l">${esc(c.hq) || '-'}</td>
+    </tr>`).join('')}</tbody>`;
+}
+$('#cmp-chart').addEventListener('click', e => {
+  const r = e.target.closest('.bar-row');
+  if (r) openCompany(r.dataset.id);
+});
+$('#cmp-table').addEventListener('click', e => {
+  const r = e.target.closest('tr[data-id]');
+  if (r) openCompany(r.dataset.id);
+});
+
+/* ---------- ログイン ---------- */
+function renderLogin() {
+  const q = $('#login-search').value.trim().toLowerCase();
+  const hit = s => !q || s.toLowerCase().includes(q);
+
+  const accs = state.accounts.filter(a => hit(a.name) ||
+    state.companies.some(c => c.route === a.id && hit(c.name)));
+  $('#account-list').innerHTML = accs.length ? accs.map(a => {
+    const linked = state.companies.filter(c => c.route === a.id);
+    const url = safeUrl(a.url);
+    return `<div class="login-card">
+      <div class="lc-top"><span class="lc-name" data-edit-account="${a.id}">${esc(a.name)}</span>
+        <button class="link" data-edit-account="${a.id}">編集</button></div>
+      ${a.loginId ? `<div class="lc-sub">ID: ${esc(a.loginId)}</div>` : ''}
+      ${a.memo ? `<div class="lc-sub">${esc(a.memo)}</div>` : ''}
+      <div class="lc-actions">
+        ${url ? `<a href="${esc(url)}" target="_blank" rel="noopener">開く ↗</a>` : ''}
+        <button data-copy-id="a:${a.id}">IDコピー</button>
+        <button data-copy-pw="a:${a.id}">PWコピー${a.pwd ? '' : '（未登録）'}</button>
+      </div>
+      ${linked.length ? `<div class="lc-sub">この経路で応募した企業（${linked.length}社）</div>
+        <div class="chips">${linked.map(c => `<span data-open-company="${c.id}">${esc(c.name)}</span>`).join('')}</div>` : ''}
+    </div>`;
+  }).join('') : `<p class="note">${state.accounts.length ? '該当なし' : 'マイナビ・リクナビなど、使っている就活サービスを登録しておくと、各企業にどこから応募したかを紐づけられます。'}</p>`;
+
+  const comps = state.companies
+    .filter(c => (c.url || c.loginId || c.pwd || c.route) && (hit(c.name) || hit(routeName(c))))
+    .sort((a, b) => (ACTIVE_STATUSES.has(b.status) - ACTIVE_STATUSES.has(a.status)) || a.name.localeCompare(b.name, 'ja'));
+  $('#login-company-list').innerHTML = comps.length ? comps.map(c => {
+    const url = safeUrl(c.url);
+    const rn = routeName(c);
+    const acc = accountById(c.route);
+    return `<div class="login-card">
+      <div class="lc-top"><span class="lc-name" data-open-company="${c.id}">${esc(c.name)}</span>
+        <span class="chip ${STATUS_MAP[c.status].cls}">${STATUS_MAP[c.status].label}</span></div>
+      <div class="lc-sub">経路: ${rn ? esc(rn) : '未設定'}${c.loginId ? `　/　マイページID: ${esc(c.loginId)}` : ''}</div>
+      <div class="lc-actions">
+        ${url ? `<a href="${esc(url)}" target="_blank" rel="noopener">マイページ ↗</a>` : ''}
+        ${c.loginId ? `<button data-copy-id="c:${c.id}">IDコピー</button>` : ''}
+        ${c.pwd ? `<button data-copy-pw="c:${c.id}">PWコピー</button>` : ''}
+        ${acc && safeUrl(acc.url) ? `<a href="${esc(acc.url)}" target="_blank" rel="noopener">${esc(acc.name)} ↗</a>` : ''}
+      </div>
+    </div>`;
+  }).join('') : `<p class="note">${q ? '該当なし' : '企業の詳細画面で「エントリー経路」やマイページ情報を登録するとここに表示されます。'}</p>`;
+}
+function itemFromRef(ref) {
+  const [kind, id] = ref.split(':');
+  return kind === 'a' ? accountById(id) : state.companies.find(c => c.id === id);
+}
+$('#view-login').addEventListener('click', e => {
+  const t = e.target.closest('[data-edit-account],[data-copy-id],[data-copy-pw],[data-open-company]');
+  if (!t) return;
+  if (t.dataset.editAccount) openAccount(t.dataset.editAccount);
+  else if (t.dataset.openCompany) openCompany(t.dataset.openCompany);
+  else if (t.dataset.copyId) copyText(itemFromRef(t.dataset.copyId)?.loginId, 'ID');
+  else if (t.dataset.copyPw) copyPassword(itemFromRef(t.dataset.copyPw)?.pwd);
+});
+$('#add-account').addEventListener('click', () => openAccount(null));
+
+/* ---------- 設定 ---------- */
+function renderSettings() {
+  $('#version').textContent = 'バージョン ' + APP_VERSION;
+  const n = state.companies.filter(c => c.pwd).length + state.accounts.filter(a => a.pwd).length;
+  $('#vault-status').textContent = state.vault
+    ? `設定済み（保存済みパスワード ${n} 件）。現在${vault.key ? 'ロック解除中' : 'ロック中'}です。アプリを5分以上離れると自動でロックされます。`
+    : '未設定です。パスワードを初めて保存するときに設定します。';
+  $('#vault-change').hidden = !state.vault;
+  $('#vault-reset').hidden = !state.vault;
+}
+$('#vault-change').addEventListener('click', async () => {
+  if (!await ensureUnlocked()) return;
+  if (await openVaultDialog('change')) render();
+});
+$('#vault-reset').addEventListener('click', () => {
+  if (!confirm('保存済みのパスワードをすべて消去し、マスターパスワードを未設定に戻します。\n（企業やID・URLなど他のデータは残ります）よろしいですか？')) return;
+  state.companies.forEach(c => { c.pwd = null; });
+  state.accounts.forEach(a => { a.pwd = null; });
+  state.vault = null;
+  lockVault();
+  save();
+  toast('リセットしました');
+  render();
+});
+
 /* ---------- company dialog ---------- */
 const cDialog = $('#company-dialog');
 const cForm = $('#company-form');
-let editing = null;  // working copy of company
-let isNew = false;
+const companyPw = makePwField($('#company-pw'));
+let editing = null;
 
 function setPriority(v) {
   cForm.priority.value = v;
@@ -289,23 +721,69 @@ $('#priority-input').addEventListener('click', e => {
   if (b) setPriority(Number(b.dataset.v));
 });
 
+function fillRouteSelect(selected) {
+  const sel = $('#route-select');
+  sel.innerHTML = '<option value="">未設定</option>' +
+    state.accounts.map(a => `<option value="${a.id}">${esc(a.name)}</option>`).join('') +
+    '<option value="own">企業HP・直接応募</option><option value="__new">＋ 就活サービスを追加…</option>';
+  sel.value = selected;
+  updateRouteInfo();
+}
+function updateRouteInfo() {
+  const acc = accountById($('#route-select').value);
+  const box = $('#route-info');
+  box.hidden = !acc;
+  if (!acc) return;
+  const url = safeUrl(acc.url);
+  box.innerHTML = `<span>${esc(acc.name)}${acc.loginId ? ` ID: ${esc(acc.loginId)}` : ''}</span>
+    ${url ? `<a href="${esc(url)}" target="_blank" rel="noopener">開く ↗</a>` : ''}
+    <button type="button" data-copy-id>IDコピー</button>
+    <button type="button" data-copy-pw>PWコピー</button>`;
+}
+$('#route-info').addEventListener('click', e => {
+  const acc = accountById($('#route-select').value);
+  if (!acc) return;
+  if (e.target.closest('[data-copy-id]')) copyText(acc.loginId, 'ID');
+  if (e.target.closest('[data-copy-pw]')) copyPassword(acc.pwd);
+});
+$('#route-select').addEventListener('change', async e => {
+  if (e.target.value !== '__new') { updateRouteInfo(); return; }
+  const id = await openAccount(null);
+  fillRouteSelect(id || editing.route || '');
+});
+
+function updateTokyoHint() {
+  const hint = $('#tokyo-hint');
+  const text = cForm.hq.value + ' ' + cForm.locations.value;
+  if (!cForm.tokyo.value && /東京|都内/.test(text)) {
+    hint.textContent = '💡 勤務地に東京が含まれています。「東京で働ける？」を設定しておくと絞り込み・比較で使えます。';
+    hint.hidden = false;
+  } else hint.hidden = true;
+}
+['hq', 'locations', 'tokyo'].forEach(n => cForm[n].addEventListener('input', updateTokyoHint));
+
+function updateOpenUrl() {
+  const v = safeUrl(cForm.url.value.trim());
+  const a = $('#open-url');
+  a.hidden = !v;
+  a.href = v || '#';
+}
+cForm.url.addEventListener('input', updateOpenUrl);
+
 function openCompany(id) {
   const src = id ? state.companies.find(c => c.id === id) : null;
-  isNew = !src;
-  editing = src ? structuredClone(src) : {
-    id: uid(), name: '', industry: '', status: 'interest', priority: 2,
-    url: '', loginId: '', memo: '', events: [], createdAt: Date.now(), updatedAt: Date.now(),
-  };
-  $('#company-dialog-title').textContent = isNew ? '企業を追加' : '企業の詳細';
-  cForm.name.value = editing.name;
-  cForm.industry.value = editing.industry;
-  cForm.status.value = editing.status;
-  cForm.url.value = editing.url;
-  cForm.loginId.value = editing.loginId;
-  cForm.memo.value = editing.memo;
+  editing = src ? structuredClone(src) : normalizeCompany({ name: '', createdAt: Date.now() });
+  $('#company-dialog-title').textContent = src ? '企業の詳細' : '企業を追加';
+  ['name', 'industry', 'status', 'hq', 'locations', 'tokyo', 'url', 'loginId', 'memo'].forEach(k => { cForm[k].value = editing[k]; });
+  POSTING_TEXT.forEach(k => { cForm['p_' + k].value = editing.posting[k]; });
+  POSTING_NUM.forEach(k => { cForm['p_' + k].value = editing.posting[k] ?? ''; });
+  $('#posting-section').open = POSTING_NUM.some(k => editing.posting[k] != null) || POSTING_TEXT.some(k => editing.posting[k]);
   setPriority(editing.priority);
+  fillRouteSelect(editing.route);
+  companyPw.load(editing.pwd);
   updateOpenUrl();
-  $('#delete-company').hidden = isNew;
+  updateTokyoHint();
+  $('#delete-company').hidden = !src;
 
   const industries = [...new Set(state.companies.map(c => c.industry).filter(Boolean))];
   $('#industry-list').innerHTML = industries.map(i => `<option value="${esc(i)}">`).join('');
@@ -313,11 +791,11 @@ function openCompany(id) {
   renderEvents();
   cDialog.showModal();
   cDialog.querySelector('.dialog-body').scrollTop = 0;
-  if (isNew) setTimeout(() => cForm.name.focus(), 50);
+  if (!src) setTimeout(() => cForm.name.focus(), 50);
 }
 
 function renderEvents() {
-  const evs = [...editing.events].sort((a, b) => (a.date + (a.time || '99')).localeCompare(b.date + (b.time || '99')));
+  const evs = [...editing.events].sort((a, b) => evKey(a).localeCompare(evKey(b)));
   $('#event-list').innerHTML = evs.length ? evs.map(ev => `
     <li class="event-item ${ev.done ? 'done' : ''}">
       <input type="checkbox" data-eid="${ev.id}" ${ev.done ? 'checked' : ''} aria-label="完了">
@@ -328,7 +806,6 @@ function renderEvents() {
       <a class="gcal" href="${esc(gcalUrl(ev, cForm.name.value || editing.name))}" target="_blank" rel="noopener">カレンダー</a>
     </li>`).join('') : '<li class="event-empty">予定はまだありません</li>';
 }
-
 $('#event-list').addEventListener('change', e => {
   const cb = e.target.closest('input[type=checkbox]');
   const ev = cb && editing.events.find(x => x.id === cb.dataset.eid);
@@ -341,19 +818,22 @@ $('#event-list').addEventListener('click', e => {
 $('#add-event').addEventListener('click', () => openEvent(null));
 
 function readCompanyForm() {
-  editing.name = cForm.name.value.trim();
-  editing.industry = cForm.industry.value.trim();
+  ['name', 'industry', 'hq', 'locations', 'url', 'loginId'].forEach(k => { editing[k] = cForm[k].value.trim(); });
   editing.status = cForm.status.value;
+  editing.tokyo = cForm.tokyo.value;
+  const r = cForm.route.value;
+  editing.route = r === '__new' ? '' : r;
   editing.priority = Number(cForm.priority.value) || 2;
-  editing.url = cForm.url.value.trim();
-  editing.loginId = cForm.loginId.value.trim();
   editing.memo = cForm.memo.value;
+  POSTING_TEXT.forEach(k => { editing.posting[k] = cForm['p_' + k].value.trim(); });
+  POSTING_NUM.forEach(k => { editing.posting[k] = numOrNull(cForm['p_' + k].value); });
 }
 
-cForm.addEventListener('submit', e => {
+cForm.addEventListener('submit', async e => {
   e.preventDefault();
   readCompanyForm();
   if (!editing.name) { cForm.name.focus(); return; }
+  editing.pwd = await companyPw.value();
   editing.updatedAt = Date.now();
   const idx = state.companies.findIndex(c => c.id === editing.id);
   if (idx >= 0) state.companies[idx] = editing; else state.companies.push(editing);
@@ -365,6 +845,7 @@ cForm.addEventListener('submit', e => {
 
 function hasUnsavedChanges() {
   readCompanyForm();
+  if (companyPw.dirty) return true;
   const orig = state.companies.find(c => c.id === editing.id);
   if (!orig) return Boolean(editing.name || editing.memo || editing.events.length);
   const strip = o => JSON.stringify({ ...o, updatedAt: 0 });
@@ -377,16 +858,8 @@ function tryCloseCompany() {
 cDialog.querySelector('[data-close]').addEventListener('click', tryCloseCompany);
 cDialog.addEventListener('cancel', e => { e.preventDefault(); tryCloseCompany(); });
 
-function updateOpenUrl() {
-  const v = cForm.url.value.trim();
-  const a = $('#open-url');
-  a.hidden = !/^https?:\/\//i.test(v);
-  a.href = a.hidden ? '#' : v;
-}
-cForm.url.addEventListener('input', updateOpenUrl);
-
 $('#delete-company').addEventListener('click', () => {
-  if (!confirm(`「${editing.name}」を削除しますか？\n登録した予定も削除されます。`)) return;
+  if (!confirm(`「${editing.name}」を削除しますか？\n登録した予定やログイン情報も削除されます。`)) return;
   state.companies = state.companies.filter(c => c.id !== editing.id);
   save();
   cDialog.close();
@@ -414,18 +887,12 @@ function openEvent(eid) {
 eForm.addEventListener('submit', e => {
   e.preventDefault();
   const data = {
-    title: eForm.title.value.trim(),
-    date: eForm.date.value,
-    time: eForm.time.value,
-    place: eForm.place.value.trim(),
-    done: eForm.done.checked,
+    title: eForm.title.value.trim(), date: eForm.date.value, time: eForm.time.value,
+    place: eForm.place.value.trim(), done: eForm.done.checked,
   };
   if (!data.title || !data.date) return;
-  if (editingEventId) {
-    Object.assign(editing.events.find(x => x.id === editingEventId), data);
-  } else {
-    editing.events.push({ id: uid(), ...data });
-  }
+  if (editingEventId) Object.assign(editing.events.find(x => x.id === editingEventId), data);
+  else editing.events.push({ id: uid(), ...data });
   eDialog.close();
   renderEvents();
 });
@@ -437,12 +904,61 @@ $('#delete-event').addEventListener('click', () => {
   renderEvents();
 });
 
+/* ---------- account dialog ---------- */
+const aDialog = $('#account-dialog');
+const aForm = $('#account-form');
+const accountPw = makePwField($('#account-pw'));
+let editingAccount = null;
+let accountResolve = null;
+
+function openAccount(id) {
+  const src = id ? accountById(id) : null;
+  editingAccount = src ? structuredClone(src) : normalizeAccount({ name: '-' });
+  if (!src) editingAccount.name = '';
+  $('#account-dialog-title').textContent = src ? 'サービスを編集' : 'サービスを追加';
+  ['name', 'url', 'loginId', 'memo'].forEach(k => { aForm[k].value = editingAccount[k]; });
+  accountPw.load(editingAccount.pwd);
+  $('#delete-account').hidden = !src;
+  aDialog.showModal();
+  if (!src) setTimeout(() => aForm.name.focus(), 50);
+  return new Promise(res => { accountResolve = res; });
+}
+function closeAccount(result) {
+  aDialog.close();
+  const r = accountResolve; accountResolve = null;
+  r?.(result);
+}
+aForm.addEventListener('submit', async e => {
+  e.preventDefault();
+  ['name', 'url', 'loginId'].forEach(k => { editingAccount[k] = aForm[k].value.trim(); });
+  editingAccount.memo = aForm.memo.value;
+  if (!editingAccount.name) return;
+  editingAccount.pwd = await accountPw.value();
+  const idx = state.accounts.findIndex(a => a.id === editingAccount.id);
+  if (idx >= 0) state.accounts[idx] = editingAccount; else state.accounts.push(editingAccount);
+  save();
+  toast('保存しました');
+  closeAccount(editingAccount.id);
+  render();
+});
+aDialog.querySelector('[data-close]').addEventListener('click', () => closeAccount(null));
+aDialog.addEventListener('cancel', e => { e.preventDefault(); closeAccount(null); });
+$('#delete-account').addEventListener('click', () => {
+  const n = state.companies.filter(c => c.route === editingAccount.id).length;
+  if (!confirm(`「${editingAccount.name}」を削除しますか？${n ? `\nこの経路の企業 ${n} 社は「未設定」になります。` : ''}`)) return;
+  state.accounts = state.accounts.filter(a => a.id !== editingAccount.id);
+  state.companies.forEach(c => { if (c.route === editingAccount.id) c.route = ''; });
+  save();
+  closeAccount(null);
+  render();
+});
+
 /* ---------- FAB ---------- */
 $('#fab').addEventListener('click', () => openCompany(null));
 
-/* ---------- settings ---------- */
+/* ---------- backup ---------- */
 $('#export-btn').addEventListener('click', () => {
-  const blob = new Blob([JSON.stringify({ app: 'syukatsu', version: 1, exportedAt: new Date().toISOString(), ...state }, null, 2)], { type: 'application/json' });
+  const blob = new Blob([JSON.stringify({ app: 'syukatsu', version: 2, exportedAt: new Date().toISOString(), ...state }, null, 2)], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = `syukatsu-backup-${todayStr()}.json`;
@@ -459,25 +975,10 @@ $('#import-file').addEventListener('change', async e => {
   try {
     const data = JSON.parse(await file.text());
     if (!Array.isArray(data.companies)) throw new Error('形式が正しくありません');
-    const companies = data.companies
-      .filter(c => c && typeof c.name === 'string')
-      .map(c => ({
-        id: String(c.id || uid()),
-        name: c.name,
-        industry: String(c.industry || ''),
-        status: STATUS_MAP[c.status] ? c.status : 'interest',
-        priority: [1, 2, 3].includes(Number(c.priority)) ? Number(c.priority) : 2,
-        url: String(c.url || ''),
-        loginId: String(c.loginId || ''),
-        memo: String(c.memo || ''),
-        events: (Array.isArray(c.events) ? c.events : [])
-          .filter(ev => ev && ev.title && /^\d{4}-\d{2}-\d{2}$/.test(ev.date))
-          .map(ev => ({ id: String(ev.id || uid()), title: String(ev.title), date: ev.date, time: String(ev.time || ''), place: String(ev.place || ''), done: Boolean(ev.done) })),
-        createdAt: Number(c.createdAt) || Date.now(),
-        updatedAt: Number(c.updatedAt) || Date.now(),
-      }));
-    if (!confirm(`${companies.length} 社のデータを読み込みます。\n現在のデータ（${state.companies.length} 社）は置き換えられます。よろしいですか？`)) return;
-    state = { companies };
+    const next = normalizeState(data);
+    if (!confirm(`${next.companies.length} 社・サービス ${next.accounts.length} 件のデータを読み込みます。\n現在のデータは置き換えられます。よろしいですか？${next.vault ? '\n（パスワードはバックアップ時のマスターパスワードで解除できます）' : ''}`)) return;
+    state = next;
+    lockVault();
     save();
     toast('読み込みました');
     render();
@@ -489,7 +990,8 @@ $('#import-file').addEventListener('change', async e => {
 $('#clear-btn').addEventListener('click', () => {
   if (!confirm('すべてのデータを削除します。元に戻せません。よろしいですか？')) return;
   if (!confirm('本当に削除しますか？（事前にバックアップの書き出しをおすすめします）')) return;
-  state = { companies: [] };
+  state = { companies: [], accounts: [], vault: null };
+  lockVault();
   save();
   toast('削除しました');
   render();
@@ -498,14 +1000,9 @@ $('#clear-btn').addEventListener('click', () => {
 /* ---------- init ---------- */
 render();
 
-// 日付が変わったときなどに「あと◯日」を更新
-document.addEventListener('visibilitychange', () => { if (!document.hidden) render(); });
-
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('sw.js').catch(err => console.warn('SW registration failed', err));
   });
 }
-
-// 永続ストレージをリクエスト（ブラウザによる自動削除を防ぐ）
 if (navigator.storage?.persist) navigator.storage.persist().catch(() => {});
