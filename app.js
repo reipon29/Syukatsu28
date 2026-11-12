@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '1.5.0';
+const APP_VERSION = '1.5.1';
 const STORAGE_KEY = 'syukatsu.v1';
 
 const STATUSES = [
@@ -999,15 +999,15 @@ const POSTING_LABELS = [
   ['job',          ['募集職種', '職種', '募集コース', 'コース', '仕事内容', '業務内容']],
   ['eligibility',  ['応募資格', '応募対象', '対象', '対象者', '募集対象']],
   ['startDate',    ['入社時期', '入社日', '入社予定日']],
-  ['contract',     ['契約期間', '雇用形態']],
+  ['contract',     ['契約期間', '雇用形態', '勤務形態', '雇用区分']],
   ['probation',    ['試用期間']],
   ['locations',    ['勤務地', '勤務場所', '就業場所', '勤務予定地', '配属先']],
-  ['hours',        ['勤務時間', '就業時間', '勤務形態']],
+  ['hours',        ['勤務時間', '就業時間', '勤務体系']],
   ['salaryNote',   ['初任給', '給与', '給与・待遇', '基本給', '月給', '給与（月給）']],
-  ['benefits',     ['福利厚生', '待遇', '社会保険', '待遇・福利厚生']],
+  ['benefits',     ['福利厚生', '待遇', '社会保険', '待遇・福利厚生', '研修制度', '教育制度', '研修']],
   ['allowances',   ['諸手当', '手当']],
   ['commute',      ['通勤費', '交通費', '通勤手当']],
-  ['raise',        ['昇給']],
+  ['raise',        ['昇給', '査定', '昇給・賞与']],
   ['bonusNote',    ['賞与', 'ボーナス']],
   ['holidaysNote', ['休日休暇', '休日・休暇', '休日', '休暇', '年間休日']],
   ['hiring',       ['採用予定人数', '募集人数', '採用人数', '採用予定数']],
@@ -1016,6 +1016,27 @@ const POSTING_LABELS = [
 // 1〜2行で終わるはずの項目（ページ末尾のメニューなどを取り込まないよう行数を制限）
 const SHORT_FIELDS = new Set(['recruiter', 'startDate', 'contract', 'probation', 'commute', 'raise', 'bonusNote', 'holidaysNote', 'hiring', 'allowances']);
 
+// 募集要項ではない見出し（ここで読み取りを止める）
+const STOP_LABELS = ['社風', '企業理念', '経営理念', '会社概要', '企業情報', '会社情報', 'メッセージ', 'よくある質問', 'FAQ',
+  'お問い合わせ', '問い合わせ先', '社員紹介', '社員インタビュー', 'インタビュー', '働く環境', 'キャリアパス', '事業内容',
+  'プライバシーポリシー', '個人情報の取り扱い', 'ENTRY', 'エントリー', 'MYPAGE', 'マイページ', '採用担当より'];
+// 「賞与 年2回」のように、見出しと内容が1行に並んだ行（別の項目の中にあっても振り分ける）
+const INLINE_LABELS = [
+  ['bonusNote', ['賞与', 'ボーナス']],
+  ['raise', ['昇給', '査定']],
+  ['probation', ['試用期間']],
+  ['commute', ['通勤費', '交通費']],
+  ['holidaysNote', ['年間休日']],
+];
+function matchInline(line) {
+  for (const [field, labels] of INLINE_LABELS) {
+    for (const l of labels) {
+      if (line.startsWith(l) && /^[\s:：]+\S/.test(line.slice(l.length))) return { field, text: line };
+    }
+  }
+  return null;
+}
+const isStop = line => STOP_LABELS.includes(line.replace(/[\s:：]+$/, ''));
 function matchLabel(line) {
   const t = line.replace(/[\s:：]+$/, '').replace(/^[■●◆▼【\[]\s*/, '').replace(/[】\]]$/, '');
   for (const [field, labels] of POSTING_LABELS) {
@@ -1029,6 +1050,7 @@ function matchLabel(line) {
 
 function parsePosting(raw) {
   const segs = []; // [{ field, lines }]
+  const inline = [];
   let cur = null;
   for (let line of raw.replace(/\r/g, '').split('\n')) {
     // 「見出し<TAB>内容」の表形式にも対応
@@ -1043,6 +1065,9 @@ function parsePosting(raw) {
       if (rest) cur.lines.push(rest);
       continue;
     }
+    if (isStop(line)) { cur = null; continue; }
+    const il = cur && matchInline(line);
+    if (il) { inline.push(il); continue; }
     if (cur) cur.lines.push(line);
   }
   segs.forEach((seg, i) => {
@@ -1059,6 +1084,7 @@ function parsePosting(raw) {
     if (!lines.length) return;
     out[field] = out[field] ? out[field] + '\n' + lines.join('\n') : lines.join('\n');
   });
+  inline.forEach(({ field, text }) => { out[field] = out[field] ? out[field] + '\n' + text : text; });
   return out;
 }
 
@@ -1116,10 +1142,18 @@ function applyPosting(auto = false) {
     const hq = raw.match(/本社(?:所在地)?(?:の|は|：|:)?\s*((?:東京都|北海道|京都府|大阪府|[^\s、,。]{2,3}県)[^\s、,。（(]*?)(?=など|[\s、,。（(]|$)/);
     if (hq) values.hq = hq[1];
   }
+  if (!values.p_probation) {
+    const pr = raw.match(/試用期間(?:あり|有り?)[^）)\n]{0,40}/);
+    if (pr) values.p_probation = pr[0].replace(/[。、\s]+$/, '');
+  }
+  if (!cForm.hq.value && !values.hq) {
+    const line = (parsed.locations || '').split('\n').find(l => /本社/.test(l));
+    if (line) values.hq = line;
+  }
   const flags = {
     p_flex: /フレックス|フレキシブル|コアタイム/.test(raw),
     p_discretionary: /裁量労働/.test(raw),
-    p_remote: /リモート|在宅勤務|テレワーク/.test(raw),
+    p_remote: /リモート|在宅|テレワーク/.test(raw),
   };
 
   const names = Object.keys(values);

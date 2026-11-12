@@ -290,7 +290,7 @@ dialog.small-dialog .dialog-body > label { display: block; font-size: 13px; colo
 /* v1.2 募集要項 */
 .paste-box { background: var(--surface); border: 1px dashed var(--border); border-radius: 12px; padding: 10px 12px; margin-bottom: 14px; }
 .paste-box { margin-top: 18px; }
-.paste-box textarea { margin: 8px 0; color: var(--text); font-size: 14px; }
+.paste-box textarea { margin: 8px 0; color: var(--text); }
 .form-section.first { border-top: none; padding-top: 0; margin: 0 0 4px; }
 .btn.full-w { width: 100%; margin-top: 8px; }
 .note.small { font-size: 12px; margin: 6px 0 0; }
@@ -338,3 +338,8 @@ details.posting > label.applied-check { color: var(--text); font-size: 14px; }
 .card-sub .applied { color: var(--text); }
 .bar-label .nm small, .cmp-table td small { display: block; font-size: 11px; color: var(--muted); }
 .bar-label .nm { line-height: 1.25; }
+
+/* iPhone でボタンを押したときの拡大（ダブルタップズーム）・入力欄の自動ズームを防ぐ */
+html { touch-action: manipulation; -webkit-text-size-adjust: 100%; }
+button, a, label, select, summary { touch-action: manipulation; }
+input:not([type=checkbox]):not([type=radio]), select, textarea { font-size: 16px !important; }
