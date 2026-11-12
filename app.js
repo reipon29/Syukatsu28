@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '1.2.0';
+const APP_VERSION = '1.3.0';
 const STORAGE_KEY = 'syukatsu.v1';
 
 const STATUSES = [
@@ -51,6 +51,11 @@ const str = v => (v == null ? '' : String(v));
 const numOrNull = v => (v === '' || v == null || !Number.isFinite(Number(v)) ? null : Number(v));
 const isCipher = v => v && typeof v === 'object' && typeof v.iv === 'string' && typeof v.ct === 'string';
 
+function normalizePwd(v) {
+  if (typeof v === 'string') return v;
+  if (isCipher(v)) return { iv: v.iv, ct: v.ct }; // v1.1〜1.2 で暗号化されたもの（引き継ぎ待ち）
+  return '';
+}
 function normalizeEvent(ev) {
   return { id: str(ev.id) || uid(), title: str(ev.title), date: ev.date, time: str(ev.time), place: str(ev.place), done: Boolean(ev.done) };
 }
@@ -72,7 +77,7 @@ function normalizeCompany(c) {
     route: str(c.route),
     url: str(c.url),
     loginId: str(c.loginId),
-    pwd: isCipher(c.pwd) ? { iv: c.pwd.iv, ct: c.pwd.ct } : null,
+    pwd: normalizePwd(c.pwd),
     posting,
     memo: str(c.memo),
     events: (Array.isArray(c.events) ? c.events : [])
@@ -88,7 +93,7 @@ function normalizeAccount(a) {
     name: str(a.name),
     url: str(a.url),
     loginId: str(a.loginId),
-    pwd: isCipher(a.pwd) ? { iv: a.pwd.iv, ct: a.pwd.ct } : null,
+    pwd: normalizePwd(a.pwd),
     memo: str(a.memo),
   };
 }
@@ -98,8 +103,13 @@ function normalizeState(d) {
   const companies = (Array.isArray(d.companies) ? d.companies : []).filter(c => c && typeof c.name === 'string').map(normalizeCompany);
   companies.forEach(c => { if (c.route && c.route !== 'own' && !ids.has(c.route)) c.route = ''; });
   const v = d.vault;
-  const vault = v && typeof v.salt === 'string' && isCipher(v.check) ? { salt: v.salt, check: v.check } : null;
-  return { companies, accounts, vault };
+  const hasCipher = [...companies, ...accounts].some(x => isCipher(x.pwd));
+  if (hasCipher && v && typeof v.salt === 'string' && isCipher(v.check)) {
+    return { companies, accounts, vault: { salt: v.salt, check: v.check } };
+  }
+  // 鍵情報がない暗号データは復元できないので破棄
+  [...companies, ...accounts].forEach(x => { if (isCipher(x.pwd)) x.pwd = ''; });
+  return { companies, accounts };
 }
 
 let state = load();
@@ -108,7 +118,7 @@ function load() {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) return normalizeState(JSON.parse(raw));
   } catch (e) { console.error(e); }
-  return { companies: [], accounts: [], vault: null };
+  return { companies: [], accounts: [] };
 }
 function save() {
   try {
@@ -200,173 +210,91 @@ function gcalUrl(ev, companyName) {
   return `https://calendar.google.com/calendar/render?${p}`;
 }
 
-/* ---------- vault（パスワード暗号化） ---------- */
-// マスターパスワードから PBKDF2 で鍵を作り、AES-GCM で暗号化。鍵はメモリ上にのみ保持。
-const vault = { key: null, hiddenAt: 0 };
-const AUTO_LOCK_MS = 5 * 60 * 1000;
-const VAULT_CHECK = 'syukatsu-vault-ok';
-const b64 = buf => btoa(String.fromCharCode(...new Uint8Array(buf)));
-const unb64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+/* ---------- パスワード ---------- */
+// パスワードはこの端末の localStorage にそのまま保存する。
+const pwText = v => (typeof v === 'string' ? v : '');
 
+/** パスワード入力欄（「表示 / 隠す」切り替え付き） */
+function makePwField(root) {
+  const input = root.querySelector('input');
+  const btn = root.querySelector('[data-act=toggle]');
+  let original = '';
+  btn.addEventListener('click', () => {
+    input.type = input.type === 'password' ? 'text' : 'password';
+    btn.textContent = input.type === 'password' ? '表示' : '隠す';
+  });
+  return {
+    load(v) {
+      original = v;
+      input.value = pwText(v);
+      input.type = 'password';
+      btn.textContent = '表示';
+    },
+    value() {
+      // 引き継ぎ前の暗号データは、空欄のままなら消さずに残す
+      if (!input.value && isCipher(original)) return original;
+      return input.value;
+    },
+  };
+}
+function copyPassword(v) { copyText(pwText(v), 'パスワード'); }
+
+/* ---------- 旧バージョン（マスターパスワード）からの引き継ぎ ---------- */
+const VAULT_CHECK = 'syukatsu-vault-ok';
+const unb64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
 async function deriveKey(pass, saltB64) {
   const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(pass), 'PBKDF2', false, ['deriveKey']);
   return crypto.subtle.deriveKey(
     { name: 'PBKDF2', salt: unb64(saltB64), iterations: 310000, hash: 'SHA-256' },
-    base, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
-}
-async function encryptWith(key, text) {
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(text));
-  return { iv: b64(iv), ct: b64(ct) };
+    base, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
 }
 async function decryptWith(key, obj) {
   const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64(obj.iv) }, key, unb64(obj.ct));
   return new TextDecoder().decode(pt);
 }
-const encrypt = text => encryptWith(vault.key, text);
-const decrypt = obj => decryptWith(vault.key, obj);
-
-function lockVault() {
-  vault.key = null;
-  updateLockBtn();
-}
-function updateLockBtn() {
-  const btn = $('#lock-btn');
-  btn.hidden = !state.vault || !['login', 'settings'].includes(currentView);
-  btn.textContent = vault.key ? '🔓 ロックする' : '🔒 ロック中';
-}
-$('#lock-btn').addEventListener('click', async () => {
-  if (vault.key) { lockVault(); toast('ロックしました'); render(); }
-  else if (await ensureUnlocked()) render();
-});
+const legacyItems = () => [...state.companies, ...state.accounts].filter(x => isCipher(x.pwd));
 
 const vDialog = $('#vault-dialog');
 const vForm = $('#vault-form');
-let vaultResolve = null;
-let vaultMode = 'unlock'; // unlock | setup | change
-
-function openVaultDialog(mode) {
-  vaultMode = mode;
-  const titles = { unlock: 'ロック解除', setup: 'マスターパスワードを設定', change: '新しいマスターパスワード' };
-  const descs = {
-    unlock: 'パスワードを表示・編集するにはマスターパスワードを入力してください。',
-    setup: 'ログインパスワードを暗号化して保存するための「マスターパスワード」を決めてください。忘れると保存したパスワードは復元できません。',
-    change: '新しいマスターパスワードを入力してください。保存済みのパスワードはすべて新しいマスターパスワードで暗号化し直されます。',
-  };
-  $('#vault-title').textContent = titles[mode];
-  $('#vault-desc').textContent = descs[mode];
-  $('#vault-confirm-wrap').hidden = mode === 'unlock';
-  vForm.confirm.required = mode !== 'unlock';
-  $('#vault-submit').textContent = mode === 'unlock' ? '解除' : '設定';
+function dropLegacy() {
+  legacyItems().forEach(x => { x.pwd = ''; });
+  delete state.vault;
+  save();
+}
+function migrateLegacy() {
+  if (!legacyItems().length) return;
+  if (!state.vault || !crypto?.subtle) { dropLegacy(); return; }
   $('#vault-error').hidden = true;
   vForm.reset();
   vDialog.showModal();
-  setTimeout(() => vForm.pass.focus(), 50);
-  return new Promise(res => { vaultResolve = res; });
 }
-function closeVault(result) {
+async function giveUpLegacy() {
+  if (!confirm('引き継がない場合、以前保存したパスワードは削除されます（ID・URLなどは残ります）。よろしいですか？')) return;
+  dropLegacy();
   vDialog.close();
-  const r = vaultResolve; vaultResolve = null;
-  r?.(result);
+  toast('パスワードを削除しました');
+  render();
 }
-vDialog.querySelector('[data-close]').addEventListener('click', () => closeVault(false));
-vDialog.addEventListener('cancel', e => { e.preventDefault(); closeVault(false); });
+vDialog.querySelector('[data-close]').addEventListener('click', giveUpLegacy);
+vDialog.addEventListener('cancel', e => { e.preventDefault(); giveUpLegacy(); });
 vForm.addEventListener('submit', async e => {
   e.preventDefault();
-  const pass = vForm.pass.value;
-  const err = $('#vault-error');
-  const showErr = m => { err.textContent = m; err.hidden = false; };
-  if (vaultMode === 'unlock') {
-    try {
-      const key = await deriveKey(pass, state.vault.salt);
-      if (await decryptWith(key, state.vault.check) !== VAULT_CHECK) throw new Error();
-      vault.key = key;
-      updateLockBtn();
-      closeVault(true);
-    } catch {
-      showErr('マスターパスワードが違います');
-    }
-    return;
+  try {
+    const key = await deriveKey(vForm.pass.value, state.vault.salt);
+    if (await decryptWith(key, state.vault.check) !== VAULT_CHECK) throw new Error();
+    for (const x of legacyItems()) x.pwd = await decryptWith(key, x.pwd);
+    delete state.vault;
+    save();
+    vDialog.close();
+    toast('パスワードを引き継ぎました');
+    render();
+  } catch {
+    $('#vault-error').textContent = 'マスターパスワードが違います';
+    $('#vault-error').hidden = false;
   }
-  if (pass.length < 4) return showErr('4文字以上にしてください');
-  if (pass !== vForm.confirm.value) return showErr('確認用と一致しません');
-  const salt = b64(crypto.getRandomValues(new Uint8Array(16)));
-  const key = await deriveKey(pass, salt);
-  if (vaultMode === 'change') {
-    // 全パスワードを新しい鍵で暗号化し直す
-    const reenc = async obj => (obj ? encryptWith(key, await decrypt(obj)) : null);
-    for (const c of state.companies) c.pwd = await reenc(c.pwd);
-    for (const a of state.accounts) a.pwd = await reenc(a.pwd);
-  }
-  state.vault = { salt, check: await encryptWith(key, VAULT_CHECK) };
-  vault.key = key;
-  save();
-  updateLockBtn();
-  closeVault(true);
-  toast(vaultMode === 'change' ? 'マスターパスワードを変更しました' : 'マスターパスワードを設定しました');
 });
 
-async function ensureUnlocked() {
-  if (vault.key) return true;
-  if (!crypto?.subtle) { alert('この環境では暗号化が使えません（https で開いてください）'); return false; }
-  return openVaultDialog(state.vault ? 'unlock' : 'setup');
-}
-
-document.addEventListener('visibilitychange', () => {
-  if (document.hidden) { vault.hiddenAt = Date.now(); return; }
-  if (vault.key && vault.hiddenAt && Date.now() - vault.hiddenAt > AUTO_LOCK_MS) lockVault();
-  render();
-});
-
-/** パスワード入力欄。ロック中は伏せたまま、タップで解除して表示・編集できる */
-function makePwField(root) {
-  const input = root.querySelector('input');
-  let cipher = null, dirty = false, loaded = false, busy = false;
-  async function reveal() {
-    if (loaded) return true;
-    if (busy) return false;
-    busy = true;
-    try {
-      if (!await ensureUnlocked()) return false;
-      input.value = cipher ? await decrypt(cipher) : '';
-      loaded = true;
-      input.readOnly = false;
-      input.placeholder = '';
-      return true;
-    } catch {
-      toast('パスワードを復号できませんでした');
-      return false;
-    } finally { busy = false; }
-  }
-  input.addEventListener('click', async () => { if (!loaded && await reveal()) input.focus(); });
-  input.addEventListener('input', () => { dirty = true; });
-  const toggleBtn = root.querySelector('[data-act=toggle]');
-  toggleBtn.addEventListener('click', async () => {
-    if (!await reveal()) return;
-    input.type = input.type === 'password' ? 'text' : 'password';
-    toggleBtn.textContent = input.type === 'password' ? '表示' : '隠す';
-  });
-  return {
-    load(c) {
-      cipher = c; dirty = false; loaded = false;
-      input.value = ''; input.type = 'password'; input.readOnly = true;
-      toggleBtn.textContent = '表示';
-      input.placeholder = c ? '🔒 保存済み（タップで表示）' : 'タップして入力';
-      if (vault.key && c) reveal();
-      else if (vault.key) { loaded = true; input.readOnly = false; input.placeholder = ''; }
-    },
-    get dirty() { return dirty; },
-    async value() {
-      if (!dirty) return cipher;
-      return input.value ? encrypt(input.value) : null;
-    },
-  };
-}
-async function copyPassword(cipher) {
-  if (!cipher) { toast('パスワードが未登録です'); return; }
-  if (!await ensureUnlocked()) return;
-  copyText(await decrypt(cipher), 'パスワード');
-}
+document.addEventListener('visibilitychange', () => { if (!document.hidden) render(); });
 
 /* ---------- navigation ---------- */
 const TITLES = { companies: '企業一覧', schedule: '予定', compare: '比較', login: 'ログイン情報', settings: '設定' };
@@ -418,7 +346,6 @@ $('#show-done').addEventListener('change', render);
 
 /* ---------- render ---------- */
 function render() {
-  updateLockBtn();
   if (currentView === 'companies') renderCompanies();
   else if (currentView === 'schedule') renderSchedule();
   else if (currentView === 'compare') renderCompare();
@@ -699,27 +626,7 @@ $('#add-account').addEventListener('click', () => openAccount(null));
 /* ---------- 設定 ---------- */
 function renderSettings() {
   $('#version').textContent = 'バージョン ' + APP_VERSION;
-  const n = state.companies.filter(c => c.pwd).length + state.accounts.filter(a => a.pwd).length;
-  $('#vault-status').textContent = state.vault
-    ? `設定済み（保存済みパスワード ${n} 件）。現在${vault.key ? 'ロック解除中' : 'ロック中'}です。アプリを5分以上離れると自動でロックされます。`
-    : '未設定です。パスワードを初めて保存するときに設定します。';
-  $('#vault-change').hidden = !state.vault;
-  $('#vault-reset').hidden = !state.vault;
 }
-$('#vault-change').addEventListener('click', async () => {
-  if (!await ensureUnlocked()) return;
-  if (await openVaultDialog('change')) render();
-});
-$('#vault-reset').addEventListener('click', () => {
-  if (!confirm('保存済みのパスワードをすべて消去し、マスターパスワードを未設定に戻します。\n（企業やID・URLなど他のデータは残ります）よろしいですか？')) return;
-  state.companies.forEach(c => { c.pwd = null; });
-  state.accounts.forEach(a => { a.pwd = null; });
-  state.vault = null;
-  lockVault();
-  save();
-  toast('リセットしました');
-  render();
-});
 
 /* ---------- company dialog ---------- */
 const cDialog = $('#company-dialog');
@@ -845,13 +752,13 @@ function readCompanyForm() {
   POSTING_TEXT.forEach(k => { editing.posting[k] = cForm['p_' + k].value.trim(); });
   POSTING_NUM.forEach(k => { editing.posting[k] = numOrNull(cForm['p_' + k].value); });
   POSTING_FLAGS.forEach(f => { editing.posting[f.key] = cForm['p_' + f.key].checked; });
+  editing.pwd = companyPw.value();
 }
 
 cForm.addEventListener('submit', async e => {
   e.preventDefault();
   readCompanyForm();
   if (!editing.name) { cForm.name.focus(); return; }
-  editing.pwd = await companyPw.value();
   editing.updatedAt = Date.now();
   const idx = state.companies.findIndex(c => c.id === editing.id);
   if (idx >= 0) state.companies[idx] = editing; else state.companies.push(editing);
@@ -863,7 +770,6 @@ cForm.addEventListener('submit', async e => {
 
 function hasUnsavedChanges() {
   readCompanyForm();
-  if (companyPw.dirty) return true;
   const orig = state.companies.find(c => c.id === editing.id);
   if (!orig) return Boolean(editing.name || editing.memo || editing.events.length);
   const strip = o => JSON.stringify({ ...o, updatedAt: 0 });
@@ -979,9 +885,9 @@ $('#salary-candidates').addEventListener('click', e => {
 });
 cForm.p_salaryNote.addEventListener('input', showSalaryCandidates);
 
-$('#parse-posting').addEventListener('click', () => {
+function applyPosting(auto = false) {
   const raw = cForm.p_raw.value;
-  if (!raw.trim()) { toast('募集要項のテキストを貼り付けてください'); cForm.p_raw.focus(); return; }
+  if (!raw.trim()) { if (!auto) toast('募集要項のテキストを貼り付けてください'); return; }
   const parsed = parsePosting(raw);
   const values = {}; // フォーム要素名 → 値
   for (const [field, text] of Object.entries(parsed)) {
@@ -1016,7 +922,8 @@ $('#parse-posting').addEventListener('click', () => {
 
   const names = Object.keys(values);
   if (!names.length && !Object.values(flags).some(Boolean)) {
-    alert('項目を読み取れませんでした。\n「勤務地」「初任給」などの見出しが1行ずつになっているか確認してください。');
+    if (auto) toast('自動で読み取れる見出しが見つかりませんでした（原文は保存されます）');
+    else alert('項目を読み取れませんでした。\n「勤務地」「初任給」などの見出しが1行ずつになっているか確認してください。');
     return;
   }
   const filled = names.filter(n => String(cForm[n].value).trim() && String(cForm[n].value).trim() !== String(values[n]).trim());
@@ -1031,7 +938,22 @@ $('#parse-posting').addEventListener('click', () => {
   showSalaryCandidates();
   updateTokyoHint();
   toast(`${count} 項目を入力しました。内容を確認して保存してください`);
-  if (sal.length > 1) toast(`初任給の候補が ${sal.length} 件あります。自分に当てはまる額を選んでください`);
+  $('#posting-section').open = true;
+  if (sal.length > 1) setTimeout(() => toast(`初任給の候補が ${sal.length} 件あります。自分に当てはまる額をタップしてください`), 2000);
+}
+$('#parse-posting').addEventListener('click', () => applyPosting(false));
+// 貼り付けたら自動で読み取る
+cForm.p_raw.addEventListener('paste', () => setTimeout(() => applyPosting(true), 0));
+$('#paste-clipboard').addEventListener('click', async () => {
+  try {
+    const text = await navigator.clipboard.readText();
+    if (!text.trim()) { toast('クリップボードが空です'); return; }
+    cForm.p_raw.value = text;
+    applyPosting(true);
+  } catch {
+    toast('貼り付けを許可できませんでした。下の欄に長押しで貼り付けてください');
+    cForm.p_raw.focus();
+  }
 });
 
 /* ---------- event dialog ---------- */
@@ -1100,7 +1022,7 @@ aForm.addEventListener('submit', async e => {
   ['name', 'url', 'loginId'].forEach(k => { editingAccount[k] = aForm[k].value.trim(); });
   editingAccount.memo = aForm.memo.value;
   if (!editingAccount.name) return;
-  editingAccount.pwd = await accountPw.value();
+  editingAccount.pwd = accountPw.value();
   const idx = state.accounts.findIndex(a => a.id === editingAccount.id);
   if (idx >= 0) state.accounts[idx] = editingAccount; else state.accounts.push(editingAccount);
   save();
@@ -1143,12 +1065,12 @@ $('#import-file').addEventListener('change', async e => {
     const data = JSON.parse(await file.text());
     if (!Array.isArray(data.companies)) throw new Error('形式が正しくありません');
     const next = normalizeState(data);
-    if (!confirm(`${next.companies.length} 社・サービス ${next.accounts.length} 件のデータを読み込みます。\n現在のデータは置き換えられます。よろしいですか？${next.vault ? '\n（パスワードはバックアップ時のマスターパスワードで解除できます）' : ''}`)) return;
+    if (!confirm(`${next.companies.length} 社・サービス ${next.accounts.length} 件のデータを読み込みます。\n現在のデータは置き換えられます。よろしいですか？`)) return;
     state = next;
-    lockVault();
     save();
     toast('読み込みました');
     render();
+    migrateLegacy();
   } catch (err) {
     alert('読み込みに失敗しました: ' + err.message);
   }
@@ -1157,8 +1079,7 @@ $('#import-file').addEventListener('change', async e => {
 $('#clear-btn').addEventListener('click', () => {
   if (!confirm('すべてのデータを削除します。元に戻せません。よろしいですか？')) return;
   if (!confirm('本当に削除しますか？（事前にバックアップの書き出しをおすすめします）')) return;
-  state = { companies: [], accounts: [], vault: null };
-  lockVault();
+  state = { companies: [], accounts: [] };
   save();
   toast('削除しました');
   render();
@@ -1166,6 +1087,7 @@ $('#clear-btn').addEventListener('click', () => {
 
 /* ---------- init ---------- */
 render();
+migrateLegacy();
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {

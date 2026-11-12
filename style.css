@@ -251,6 +251,7 @@ details.posting label input, details.posting label textarea { margin-top: 4px; c
 dialog.small-dialog { height: fit-content; max-height: 90dvh; max-width: 400px; margin: auto; border-radius: 16px; width: calc(100% - 32px); }
 dialog.small-dialog form { height: auto; }
 dialog.small-dialog h2 { margin: 0 0 8px; font-size: 17px; }
+dialog.small-dialog .dialog-body > label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 12px; }
 
 /* login tab */
 #login-search { margin-bottom: 4px; }
@@ -288,8 +289,10 @@ dialog.small-dialog h2 { margin: 0 0 8px; font-size: 17px; }
 
 /* v1.2 募集要項 */
 .paste-box { background: var(--surface); border: 1px dashed var(--border); border-radius: 12px; padding: 10px 12px; margin-bottom: 14px; }
-.paste-box > label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 8px; }
-.paste-box textarea { margin-top: 4px; color: var(--text); }
+.paste-box { margin-top: 18px; }
+.paste-box textarea { margin: 8px 0; color: var(--text); font-size: 14px; }
+.form-section.first { border-top: none; padding-top: 0; margin: 0 0 4px; }
+.btn.full-w { width: 100%; margin-top: 8px; }
 .note.small { font-size: 12px; margin: 6px 0 0; }
 .sub-section { font-size: 13px; margin: 16px 0 8px; color: var(--text); }
 .sub { font-size: 11px; margin-left: 4px; color: var(--muted); }

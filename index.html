@@ -17,7 +17,6 @@
 <body>
   <header class="topbar">
     <h1 id="page-title">企業一覧</h1>
-    <button id="lock-btn" class="lock-btn" hidden></button>
   </header>
 
   <main>
@@ -89,28 +88,20 @@
       <div id="account-list" class="card-list"></div>
       <div class="section-head"><h3>企業ごとのログイン先</h3></div>
       <div id="login-company-list" class="card-list"></div>
-      <p class="note" style="margin-top:12px">パスワードはマスターパスワードで暗号化してこの端末内に保存されます。</p>
+      <p class="note" style="margin-top:12px">ID・パスワードはこの端末のブラウザ内にだけ保存され、外部には送信されません。</p>
     </section>
 
     <!-- 設定 -->
     <section id="view-settings" class="view">
       <div class="panel">
         <h2>データ</h2>
-        <p class="note">データはこの端末のブラウザ内にのみ保存されます。機種変更や別端末で使う場合はバックアップを書き出して読み込んでください（パスワードは暗号化されたまま書き出されます）。</p>
+        <p class="note">データはこの端末のブラウザ内にのみ保存されます。機種変更や別端末で使う場合はバックアップを書き出して読み込んでください。<br>※ バックアップファイルにはパスワードもそのまま含まれるので、人に渡したり公開しないでください。</p>
         <div class="btn-col">
           <button id="export-btn" class="btn">バックアップを書き出す (JSON)</button>
           <label class="btn">バックアップを読み込む
             <input id="import-file" type="file" accept="application/json,.json" hidden>
           </label>
           <button id="clear-btn" class="btn danger">すべてのデータを削除</button>
-        </div>
-      </div>
-      <div class="panel">
-        <h2>マスターパスワード</h2>
-        <p class="note" id="vault-status"></p>
-        <div class="btn-col">
-          <button id="vault-change" class="btn">マスターパスワードを変更</button>
-          <button id="vault-reset" class="btn danger">忘れた場合: 保存済みパスワードを全消去して再設定</button>
         </div>
       </div>
       <div class="panel">
@@ -203,16 +194,17 @@
           </label>
         </div>
 
+        <div class="paste-box">
+          <h3 class="form-section first">📋 募集要項を貼り付けて自動入力</h3>
+          <p class="note small">採用サイトの「募集要項」をまるごとコピーして、下のボタンを押すか欄に貼り付けるだけで各項目に入力されます。</p>
+          <button type="button" id="paste-clipboard" class="btn primary full-w">コピーした募集要項を貼り付け</button>
+          <textarea name="p_raw" rows="2" placeholder="ここに直接貼り付けてもOK（貼った瞬間に読み取ります）"></textarea>
+          <button type="button" id="parse-posting" class="btn small">もう一度読み取る</button>
+        </div>
+
         <details class="posting" id="posting-section">
           <summary><h3 class="form-section">📄 募集要項（任意）</h3></summary>
 
-          <div class="paste-box">
-            <label>採用サイトの募集要項を貼り付けて自動入力
-              <textarea name="p_raw" rows="3" placeholder="採用ページの「募集要項」をまるごとコピーして貼り付け →「読み取る」"></textarea>
-            </label>
-            <button type="button" id="parse-posting" class="btn small">読み取って各項目に入力</button>
-            <p class="note small">原文はここに保存されます。読み取り結果は必ず確認してください。</p>
-          </div>
 
           <label>募集者・入社する会社
             <input name="p_recruiter" autocomplete="off" placeholder="例: 〇〇グループ採用共同事業体">
@@ -363,18 +355,15 @@
   <dialog id="vault-dialog" class="small-dialog">
     <form id="vault-form" method="dialog">
       <div class="dialog-body">
-        <h2 id="vault-title">ロック解除</h2>
-        <p id="vault-desc" class="note"></p>
-        <label>マスターパスワード
+        <h2>パスワードの引き継ぎ</h2>
+        <p class="note">マスターパスワードは不要になりました。以前のマスターパスワードを1回だけ入力すると、保存済みのパスワードをそのまま使えるようになります。</p>
+        <label>以前のマスターパスワード
           <input name="pass" type="password" autocomplete="off" required>
-        </label>
-        <label id="vault-confirm-wrap">確認のためもう一度
-          <input name="confirm" type="password" autocomplete="off">
         </label>
         <p id="vault-error" class="error" hidden></p>
         <div class="btn-row">
-          <button type="button" class="btn" data-close>キャンセル</button>
-          <button type="submit" class="btn primary" id="vault-submit">解除</button>
+          <button type="button" class="btn" data-close>引き継がない</button>
+          <button type="submit" class="btn primary">引き継ぐ</button>
         </div>
       </div>
     </form>
