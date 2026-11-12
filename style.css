@@ -234,9 +234,9 @@ dialog form { display: flex; flex-direction: column; height: 100%; max-height: i
 .route-info a, .route-info button { color: var(--accent); background: none; border: none; padding: 0; font-size: 13px; cursor: pointer; text-decoration: none; }
 
 .pw-field { position: relative; margin-top: 4px; }
-.pw-field input { margin-top: 0 !important; padding-right: 40px; }
+.pw-field input { margin-top: 0 !important; padding-right: 52px; }
 .pw-field input[readonly] { color: var(--muted); }
-.pw-field button { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); background: none; border: none; font-size: 16px; padding: 6px; cursor: pointer; }
+.pw-field button { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); background: none; border: none; font-size: 13px; font-weight: 600; color: var(--accent); padding: 6px 8px; cursor: pointer; }
 
 details.posting { margin-bottom: 12px; }
 details.posting summary { list-style: none; cursor: pointer; }
@@ -285,3 +285,16 @@ dialog.small-dialog h2 { margin: 0 0 8px; font-size: 17px; }
 .cmp-table td.l { text-align: left; }
 .cmp-table tbody tr { cursor: pointer; }
 .cmp-table .best { font-weight: 700; color: var(--accent); }
+
+/* v1.2 募集要項 */
+.paste-box { background: var(--surface); border: 1px dashed var(--border); border-radius: 12px; padding: 10px 12px; margin-bottom: 14px; }
+.paste-box > label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 8px; }
+.paste-box textarea { margin-top: 4px; color: var(--text); }
+.note.small { font-size: 12px; margin: 6px 0 0; }
+.sub-section { font-size: 13px; margin: 16px 0 8px; color: var(--text); }
+.sub { font-size: 11px; margin-left: 4px; color: var(--muted); }
+.check-row { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: -4px 0 8px; }
+.check-row .check-inline { font-size: 14px; color: var(--text); margin: 0; }
+.candidates { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; color: var(--muted); margin: -4px 0 12px; }
+.candidates button { border: 1px solid var(--accent); color: var(--accent); background: var(--surface); border-radius: 999px; padding: 3px 10px; font-size: 12px; cursor: pointer; }
+.cmp-table td.l { max-width: 14em; overflow: hidden; text-overflow: ellipsis; }

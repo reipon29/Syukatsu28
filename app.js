@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '1.1.0';
+const APP_VERSION = '1.2.0';
 const STORAGE_KEY = 'syukatsu.v1';
 
 const STATUSES = [
@@ -28,6 +28,7 @@ const TOKYO = {
 // 比較できる数値項目（better: 大きいほど良い=high / 小さいほど良い=low）
 const METRICS = [
   { key: 'salary',   label: '初任給（月給）',  unit: '円',   better: 'high', fmt: v => v.toLocaleString('ja-JP') + '円' },
+  { key: 'housing',  label: '住宅補助（月額）', unit: '円', better: 'high', fmt: v => v.toLocaleString('ja-JP') + '円' },
   { key: 'annual',   label: '想定年収',        unit: '万円', better: 'high', fmt: v => v.toLocaleString('ja-JP') + '万円' },
   { key: 'bonus',    label: '賞与',            unit: 'ヶ月', better: 'high', fmt: v => v + 'ヶ月' },
   { key: 'holidays', label: '年間休日',        unit: '日',   better: 'high', fmt: v => v + '日' },
@@ -35,7 +36,13 @@ const METRICS = [
   { key: 'hiring',   label: '採用予定人数',    unit: '人',   better: 'high', fmt: v => v.toLocaleString('ja-JP') + '人' },
 ];
 const roundFor = (m, v) => (['bonus', 'overtime'].includes(m.key) ? Math.round(v * 10) / 10 : Math.round(v));
-const POSTING_TEXT = ['job', 'hours', 'benefits', 'note'];
+const POSTING_TEXT = ['job', 'recruiter', 'eligibility', 'startDate', 'contract', 'probation', 'hours', 'holidaysNote',
+  'salaryNote', 'bonusNote', 'raise', 'benefits', 'allowances', 'commute', 'note', 'raw'];
+const POSTING_FLAGS = [
+  { key: 'flex', label: 'フレックス' },
+  { key: 'discretionary', label: '裁量労働' },
+  { key: 'remote', label: 'リモート可' },
+];
 const POSTING_NUM = METRICS.map(m => m.key);
 
 /* ---------- storage ---------- */
@@ -52,6 +59,7 @@ function normalizeCompany(c) {
   const posting = {};
   POSTING_TEXT.forEach(k => { posting[k] = str(p[k]); });
   POSTING_NUM.forEach(k => { posting[k] = numOrNull(p[k]); });
+  POSTING_FLAGS.forEach(f => { posting[f.key] = Boolean(p[f.key]); });
   return {
     id: str(c.id) || uid(),
     name: str(c.name),
@@ -147,6 +155,9 @@ function stars(n) { return '★'.repeat(n) + '☆'.repeat(3 - n); }
 function tokyoBadge(c) {
   const t = TOKYO[c.tokyo];
   return t ? `<span class="badge ${t.cls}" title="${t.label}">${t.badge}</span>` : '';
+}
+function hasPosting(c) {
+  return POSTING_NUM.some(k => c.posting[k] != null) || POSTING_TEXT.some(k => c.posting[k]) || POSTING_FLAGS.some(f => c.posting[f.key]);
 }
 function accountById(id) { return state.accounts.find(a => a.id === id); }
 function routeName(c) {
@@ -329,14 +340,17 @@ function makePwField(root) {
   }
   input.addEventListener('click', async () => { if (!loaded && await reveal()) input.focus(); });
   input.addEventListener('input', () => { dirty = true; });
-  root.querySelector('[data-act=toggle]').addEventListener('click', async () => {
+  const toggleBtn = root.querySelector('[data-act=toggle]');
+  toggleBtn.addEventListener('click', async () => {
     if (!await reveal()) return;
     input.type = input.type === 'password' ? 'text' : 'password';
+    toggleBtn.textContent = input.type === 'password' ? '表示' : '隠す';
   });
   return {
     load(c) {
       cipher = c; dirty = false; loaded = false;
       input.value = ''; input.type = 'password'; input.readOnly = true;
+      toggleBtn.textContent = '表示';
       input.placeholder = c ? '🔒 保存済み（タップで表示）' : 'タップして入力';
       if (vault.key && c) reveal();
       else if (vault.key) { loaded = true; input.readOnly = false; input.placeholder = ''; }
@@ -559,7 +573,7 @@ function compareTargets() {
 function renderCompare() {
   const metric = METRICS.find(m => m.key === $('#cmp-metric').value) || METRICS[0];
   const targets = compareTargets();
-  const hasAny = targets.some(c => POSTING_NUM.some(k => c.posting[k] != null) || c.posting.job);
+  const hasAny = targets.some(hasPosting);
 
   $('#cmp-empty').hidden = hasAny;
   $$('#view-compare .panel').forEach(p => { p.hidden = !hasAny; });
@@ -588,7 +602,7 @@ function renderCompare() {
   $('#cmp-missing').textContent = missing.length ? `未入力: ${missing.map(c => c.name).join('、')}` : '';
 
   // 一覧表（各列でいちばん良い値を強調）
-  const rows = targets.filter(c => POSTING_NUM.some(k => c.posting[k] != null) || c.posting.job);
+  const rows = targets.filter(hasPosting);
   rows.sort((a, b) => {
     const av = a.posting[metric.key], bv = b.posting[metric.key];
     if (av == null) return bv == null ? 0 : 1;
@@ -601,7 +615,7 @@ function renderCompare() {
     if (vals.length >= 2) best[m.key] = m.better === 'low' ? Math.min(...vals) : Math.max(...vals);
   });
   $('#cmp-table').innerHTML =
-    `<thead><tr><th>企業</th><th>東京</th>${METRICS.map(m => `<th>${m.label}</th>`).join('')}<th>職種</th><th>本社</th></tr></thead>
+    `<thead><tr><th>企業</th><th>東京</th>${METRICS.map(m => `<th>${m.label}</th>`).join('')}<th>働き方</th><th>職種</th><th>本社</th></tr></thead>
     <tbody>${rows.map(c => `<tr data-id="${c.id}">
       <td>${esc(c.name)}</td>
       <td class="l">${TOKYO[c.tokyo]?.badge || '-'}</td>
@@ -609,7 +623,8 @@ function renderCompare() {
         const v = c.posting[m.key];
         return `<td class="${v != null && v === best[m.key] ? 'best' : ''}">${v == null ? '-' : esc(m.fmt(v))}</td>`;
       }).join('')}
-      <td class="l">${esc(c.posting.job) || '-'}</td>
+      <td class="l">${POSTING_FLAGS.filter(f => c.posting[f.key]).map(f => f.label).join('・') || '-'}</td>
+      <td class="l" title="${esc(c.posting.job)}">${esc(c.posting.job.split('\n')[0]) || '-'}</td>
       <td class="l">${esc(c.hq) || '-'}</td>
     </tr>`).join('')}</tbody>`;
 }
@@ -777,7 +792,9 @@ function openCompany(id) {
   ['name', 'industry', 'status', 'hq', 'locations', 'tokyo', 'url', 'loginId', 'memo'].forEach(k => { cForm[k].value = editing[k]; });
   POSTING_TEXT.forEach(k => { cForm['p_' + k].value = editing.posting[k]; });
   POSTING_NUM.forEach(k => { cForm['p_' + k].value = editing.posting[k] ?? ''; });
-  $('#posting-section').open = POSTING_NUM.some(k => editing.posting[k] != null) || POSTING_TEXT.some(k => editing.posting[k]);
+  POSTING_FLAGS.forEach(f => { cForm['p_' + f.key].checked = editing.posting[f.key]; });
+  $('#posting-section').open = hasPosting(editing);
+  showSalaryCandidates();
   setPriority(editing.priority);
   fillRouteSelect(editing.route);
   companyPw.load(editing.pwd);
@@ -827,6 +844,7 @@ function readCompanyForm() {
   editing.memo = cForm.memo.value;
   POSTING_TEXT.forEach(k => { editing.posting[k] = cForm['p_' + k].value.trim(); });
   POSTING_NUM.forEach(k => { editing.posting[k] = numOrNull(cForm['p_' + k].value); });
+  POSTING_FLAGS.forEach(f => { editing.posting[f.key] = cForm['p_' + f.key].checked; });
 }
 
 cForm.addEventListener('submit', async e => {
@@ -865,6 +883,155 @@ $('#delete-company').addEventListener('click', () => {
   cDialog.close();
   toast('削除しました');
   render();
+});
+
+/* ---------- 募集要項の読み取り ---------- */
+// 見出し行（「勤務地」「初任給」など）で区切って各項目に振り分ける
+const POSTING_LABELS = [
+  ['recruiter',    ['募集者の名称', '募集者', '募集企業', '採用企業', '会社名']],
+  ['job',          ['募集職種', '職種', '募集コース', 'コース', '仕事内容', '業務内容']],
+  ['eligibility',  ['応募資格', '応募対象', '対象', '対象者', '募集対象']],
+  ['startDate',    ['入社時期', '入社日', '入社予定日']],
+  ['contract',     ['契約期間', '雇用形態']],
+  ['probation',    ['試用期間']],
+  ['locations',    ['勤務地', '勤務場所', '就業場所', '勤務予定地', '配属先']],
+  ['hours',        ['勤務時間', '就業時間', '勤務形態']],
+  ['salaryNote',   ['初任給', '給与', '給与・待遇', '基本給', '月給', '給与（月給）']],
+  ['benefits',     ['福利厚生', '待遇', '社会保険', '待遇・福利厚生']],
+  ['allowances',   ['諸手当', '手当']],
+  ['commute',      ['通勤費', '交通費', '通勤手当']],
+  ['raise',        ['昇給']],
+  ['bonusNote',    ['賞与', 'ボーナス']],
+  ['holidaysNote', ['休日休暇', '休日・休暇', '休日', '休暇', '年間休日']],
+  ['hiring',       ['採用予定人数', '募集人数', '採用人数', '採用予定数']],
+  ['note',         ['選考フロー', '選考方法', '選考プロセス', '提出書類', '選考の流れ']],
+];
+// 1〜2行で終わるはずの項目（ページ末尾のメニューなどを取り込まないよう行数を制限）
+const SHORT_FIELDS = new Set(['recruiter', 'startDate', 'contract', 'probation', 'commute', 'raise', 'bonusNote', 'holidaysNote', 'hiring', 'allowances']);
+
+function matchLabel(line) {
+  const t = line.replace(/[\s:：]+$/, '').replace(/^[■●◆▼【\[]\s*/, '').replace(/[】\]]$/, '');
+  for (const [field, labels] of POSTING_LABELS) {
+    for (const l of labels) {
+      if (t === l) return { field, rest: '' };
+      if (t.startsWith(l) && /^[（(]/.test(t.slice(l.length)) && t.length <= l.length + 14) return { field, rest: '' };
+    }
+  }
+  return null;
+}
+
+function parsePosting(raw) {
+  const segs = []; // [{ field, lines }]
+  let cur = null;
+  for (let line of raw.replace(/\r/g, '').split('\n')) {
+    // 「見出し<TAB>内容」の表形式にも対応
+    const tab = line.split('\t').map(x => x.replace(/[\s\u3000]+/g, ' ').trim());
+    line = tab.filter(Boolean).join(' ');
+    if (!line) continue;
+    const m = matchLabel(tab[0]);
+    if (m) {
+      cur = { field: m.field, lines: [] };
+      segs.push(cur);
+      const rest = tab.slice(1).join(' ').trim();
+      if (rest) cur.lines.push(rest);
+      continue;
+    }
+    if (cur) cur.lines.push(line);
+  }
+  segs.forEach((seg, i) => {
+    let lines = seg.lines.slice(0, SHORT_FIELDS.has(seg.field) ? 3 : 20);
+    // 最後の項目にはページ末尾のメニュー（短く数字のない行）が続きやすいので、そこで切る
+    if (i === segs.length - 1) {
+      const cut = lines.findIndex((l, j) => j > 0 && l.length <= 12 && !/\d/.test(l));
+      if (cut > 0) lines = lines.slice(0, cut);
+    }
+    seg.lines = lines;
+  });
+  const out = {};
+  segs.forEach(({ field, lines }) => {
+    if (!lines.length) return;
+    out[field] = out[field] ? out[field] + '\n' + lines.join('\n') : lines.join('\n');
+  });
+  return out;
+}
+
+const toYen = (n, man) => Math.round(Number(String(n).replace(/,/g, '')) * (man ? 10000 : 1));
+function yenAmounts(text) {
+  const res = [];
+  const re = /(\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)\s*(万)?\s*円/g;
+  let m;
+  while ((m = re.exec(text || ''))) res.push(toYen(m[1], m[2]));
+  return res;
+}
+function salaryCandidates(text) {
+  return [...new Set(yenAmounts(text).filter(v => v >= 150000 && v <= 1500000))];
+}
+function showSalaryCandidates() {
+  const box = $('#salary-candidates');
+  const cands = salaryCandidates(cForm.p_salaryNote.value);
+  box.hidden = cands.length < 2;
+  box.innerHTML = cands.length < 2 ? '' : '詳細にある金額から選ぶ: ' +
+    cands.map(v => `<button type="button" data-v="${v}">${v.toLocaleString('ja-JP')}円</button>`).join('');
+}
+$('#salary-candidates').addEventListener('click', e => {
+  const b = e.target.closest('button[data-v]');
+  if (b) { cForm.p_salary.value = b.dataset.v; toast('比較用の初任給にセットしました'); }
+});
+cForm.p_salaryNote.addEventListener('input', showSalaryCandidates);
+
+$('#parse-posting').addEventListener('click', () => {
+  const raw = cForm.p_raw.value;
+  if (!raw.trim()) { toast('募集要項のテキストを貼り付けてください'); cForm.p_raw.focus(); return; }
+  const parsed = parsePosting(raw);
+  const values = {}; // フォーム要素名 → 値
+  for (const [field, text] of Object.entries(parsed)) {
+    if (field === 'locations') values.locations = text;
+    else if (field === 'hiring') {
+      const n = text.match(/(\d+)\s*(?:名|人)/);
+      if (n) values.p_hiring = n[1];
+      values.p_note = (values.p_note ? values.p_note + '\n' : '') + '採用予定人数: ' + text;
+    } else if (field === 'note') values.p_note = (values.p_note ? values.p_note + '\n' : '') + text;
+    else values['p_' + field] = text;
+  }
+  // 数値の抽出
+  const sal = salaryCandidates(parsed.salaryNote);
+  if (sal.length === 1) values.p_salary = sal[0];
+  const housing = (raw.match(/住宅(?:補助|手当)[^\n]*?(\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)\s*(万)?\s*円/) || []);
+  if (housing[1]) values.p_housing = toYen(housing[1], housing[2]);
+  const bonus = (parsed.bonusNote || '').match(/(\d+(?:\.\d+)?)\s*(?:ヶ月|か月|カ月|ヵ月|ケ月)/);
+  if (bonus) values.p_bonus = bonus[1];
+  const hol = raw.match(/年間休日[^\d\n]{0,10}(\d{2,3})\s*日/);
+  if (hol) values.p_holidays = hol[1];
+  const ot = raw.match(/(?:月平均)?残業[^\d\n]{0,10}(\d{1,3}(?:\.\d)?)\s*時間/);
+  if (ot) values.p_overtime = ot[1];
+  if (!cForm.hq.value) {
+    const hq = raw.match(/本社(?:所在地)?(?:の|は|：|:)?\s*((?:東京都|北海道|京都府|大阪府|[^\s、,。]{2,3}県)[^\s、,。（(]*?)(?=など|[\s、,。（(]|$)/);
+    if (hq) values.hq = hq[1];
+  }
+  const flags = {
+    p_flex: /フレックス|フレキシブル|コアタイム/.test(raw),
+    p_discretionary: /裁量労働/.test(raw),
+    p_remote: /リモート|在宅勤務|テレワーク/.test(raw),
+  };
+
+  const names = Object.keys(values);
+  if (!names.length && !Object.values(flags).some(Boolean)) {
+    alert('項目を読み取れませんでした。\n「勤務地」「初任給」などの見出しが1行ずつになっているか確認してください。');
+    return;
+  }
+  const filled = names.filter(n => String(cForm[n].value).trim() && String(cForm[n].value).trim() !== String(values[n]).trim());
+  const overwrite = filled.length > 0 && confirm(`すでに入力済みの項目が ${filled.length} 件あります。読み取った内容で上書きしますか？\n（キャンセル → 空欄の項目だけ入力）`);
+  let count = 0;
+  for (const n of names) {
+    if (String(cForm[n].value).trim() && !overwrite) continue;
+    cForm[n].value = values[n];
+    count++;
+  }
+  for (const [n, v] of Object.entries(flags)) if (v && !cForm[n].checked) { cForm[n].checked = true; count++; }
+  showSalaryCandidates();
+  updateTokyoHint();
+  toast(`${count} 項目を入力しました。内容を確認して保存してください`);
+  if (sal.length > 1) toast(`初任給の候補が ${sal.length} 件あります。自分に当てはまる額を選んでください`);
 });
 
 /* ---------- event dialog ---------- */

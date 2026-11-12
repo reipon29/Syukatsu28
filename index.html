@@ -170,7 +170,7 @@
           <input name="hq" autocomplete="off" placeholder="例: 東京都千代田区">
         </label>
         <label>その他の勤務地・支社・配属先
-          <textarea name="locations" rows="2" placeholder="例: 大阪・名古屋・全国転勤あり / 初期配属は東京"></textarea>
+          <textarea name="locations" rows="3" placeholder="例: 大阪・名古屋・全国転勤あり / 初期配属は東京"></textarea>
         </label>
         <label>東京で働ける？
           <select name="tokyo">
@@ -198,42 +198,86 @@
           <label>パスワード
             <div class="pw-field" id="company-pw">
               <input type="password" autocomplete="off" autocapitalize="off" spellcheck="false">
-              <button type="button" data-act="toggle" aria-label="表示切替">👁</button>
+              <button type="button" data-act="toggle">表示</button>
             </div>
           </label>
         </div>
 
         <details class="posting" id="posting-section">
           <summary><h3 class="form-section">📄 募集要項（任意）</h3></summary>
-          <label>職種・コース
-            <input name="p_job" autocomplete="off" placeholder="例: 総合職 / エンジニア職">
+
+          <div class="paste-box">
+            <label>採用サイトの募集要項を貼り付けて自動入力
+              <textarea name="p_raw" rows="3" placeholder="採用ページの「募集要項」をまるごとコピーして貼り付け →「読み取る」"></textarea>
+            </label>
+            <button type="button" id="parse-posting" class="btn small">読み取って各項目に入力</button>
+            <p class="note small">原文はここに保存されます。読み取り結果は必ず確認してください。</p>
+          </div>
+
+          <label>募集者・入社する会社
+            <input name="p_recruiter" autocomplete="off" placeholder="例: 〇〇グループ採用共同事業体">
+          </label>
+          <label>募集職種・コース
+            <textarea name="p_job" rows="3" placeholder="例: SE / コンサル / 営業"></textarea>
+          </label>
+          <label>応募資格
+            <textarea name="p_eligibility" rows="2"></textarea>
           </label>
           <div class="grid2">
-            <label>初任給（月給・円）
+            <label>入社時期<input name="p_startDate" autocomplete="off" placeholder="例: 2028年4月"></label>
+            <label>契約期間<input name="p_contract" autocomplete="off" placeholder="例: 期間の定めなし"></label>
+            <label>試用期間<input name="p_probation" autocomplete="off" placeholder="例: あり（4か月）"></label>
+            <label>採用予定人数（人）<input name="p_hiring" type="number" inputmode="numeric" min="0" step="1" placeholder="例 50"></label>
+          </div>
+
+          <h4 class="sub-section">勤務時間・働き方</h4>
+          <label>勤務時間
+            <textarea name="p_hours" rows="3" placeholder="例: 8:30〜17:00 / フレックス（コアタイム10:00〜15:00）"></textarea>
+          </label>
+          <div class="check-row">
+            <label class="check-inline"><input type="checkbox" name="p_flex"> フレックス</label>
+            <label class="check-inline"><input type="checkbox" name="p_discretionary"> 裁量労働</label>
+            <label class="check-inline"><input type="checkbox" name="p_remote"> リモート可</label>
+          </div>
+          <div class="grid2">
+            <label>月平均残業（時間）<input name="p_overtime" type="number" inputmode="decimal" min="0" step="1" placeholder="例 20"></label>
+            <label>年間休日（日）<input name="p_holidays" type="number" inputmode="numeric" min="0" step="1" placeholder="例 125"></label>
+          </div>
+          <label>休日・休暇
+            <input name="p_holidaysNote" autocomplete="off" placeholder="例: 完全週休2日・祝日・年末年始">
+          </label>
+
+          <h4 class="sub-section">給与</h4>
+          <div class="grid2">
+            <label>初任給（月給・円）<span class="sub">比較に使う額</span>
               <input name="p_salary" type="number" inputmode="numeric" min="0" step="1000" placeholder="例 250000">
             </label>
-            <label>想定年収（万円）
+            <label>想定年収（万円）<span class="sub">任意</span>
               <input name="p_annual" type="number" inputmode="decimal" min="0" step="1" placeholder="例 400">
             </label>
-            <label>賞与（年 ◯ヶ月）
-              <input name="p_bonus" type="number" inputmode="decimal" min="0" step="0.1" placeholder="例 4.5">
-            </label>
-            <label>年間休日（日）
-              <input name="p_holidays" type="number" inputmode="numeric" min="0" step="1" placeholder="例 125">
-            </label>
-            <label>月平均残業（時間）
-              <input name="p_overtime" type="number" inputmode="decimal" min="0" step="1" placeholder="例 20">
-            </label>
-            <label>採用予定人数（人）
-              <input name="p_hiring" type="number" inputmode="numeric" min="0" step="1" placeholder="例 50">
-            </label>
           </div>
-          <label>勤務時間
-            <input name="p_hours" autocomplete="off" placeholder="例: 9:00〜17:30 / フレックス">
+          <div id="salary-candidates" class="candidates" hidden></div>
+          <label>初任給の詳細（学歴別・グレード別 など）
+            <textarea name="p_salaryNote" rows="3"></textarea>
           </label>
-          <label>福利厚生・手当（住宅手当・リモート など）
-            <textarea name="p_benefits" rows="2"></textarea>
+          <div class="grid2">
+            <label>賞与（年 ◯ヶ月）<input name="p_bonus" type="number" inputmode="decimal" min="0" step="0.1" placeholder="例 4.5"></label>
+            <label>賞与の詳細<input name="p_bonusNote" autocomplete="off" placeholder="例: 年2回(6月・12月)"></label>
+          </div>
+          <label>昇給<input name="p_raise" autocomplete="off" placeholder="例: 年1回（6月）"></label>
+
+          <h4 class="sub-section">福利厚生・手当</h4>
+          <label>住宅補助（月額・円）<span class="sub">比較に使う額</span>
+            <input name="p_housing" type="number" inputmode="numeric" min="0" step="500" placeholder="例 30000">
           </label>
+          <label>福利厚生（住宅補助・制度 など）
+            <textarea name="p_benefits" rows="3"></textarea>
+          </label>
+          <div class="grid2">
+            <label>諸手当<input name="p_allowances" autocomplete="off" placeholder="例: リモートワーク手当"></label>
+            <label>通勤費<input name="p_commute" autocomplete="off" placeholder="例: 実費支給"></label>
+          </div>
+
           <label>その他（選考フロー・必要書類 など）
             <textarea name="p_note" rows="3"></textarea>
           </label>
@@ -304,7 +348,7 @@
         <label>パスワード
           <div class="pw-field" id="account-pw">
             <input type="password" autocomplete="off" autocapitalize="off" spellcheck="false">
-            <button type="button" data-act="toggle" aria-label="表示切替">👁</button>
+            <button type="button" data-act="toggle">表示</button>
           </div>
         </label>
         <label>メモ
