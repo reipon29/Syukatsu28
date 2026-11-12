@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '2.0.0';
+const APP_VERSION = '2.0.1';
 const STORAGE_KEY = 'syukatsu.v1';
 
 const STATUSES = [
@@ -1757,6 +1757,29 @@ function exportIcs() {
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   toast(`${n}件の予定を書き出しました。ファイルを開くとカレンダーに追加できます`);
 }
+
+/* ---------- 外部リンクを Safari で開く ---------- */
+// ホーム画面から起動した iPhone のアプリでは、普通のリンクはアプリ内ブラウザで開いてしまう。
+// iOS の「x-safari-https://」形式で Safari 本体を開き、開けなかったときだけ従来どおり開く。
+const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const isStandalone = navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
+function openInSafari(url) {
+  let left = false;
+  const onHide = () => { if (document.hidden) left = true; };
+  document.addEventListener('visibilitychange', onHide);
+  location.href = 'x-safari-' + url;
+  setTimeout(() => {
+    document.removeEventListener('visibilitychange', onHide);
+    if (!left && !document.hidden) window.open(url, '_blank', 'noopener');
+  }, 1200);
+}
+document.addEventListener('click', e => {
+  if (!isIOS || !isStandalone) return;
+  const a = e.target.closest('a[target=_blank]');
+  if (!a || !/^https?:\/\//i.test(a.href)) return;
+  e.preventDefault();
+  openInSafari(a.href);
+}, true);
 
 /* ---------- init ---------- */
 showView('home');
