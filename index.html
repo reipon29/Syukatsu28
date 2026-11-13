@@ -89,6 +89,7 @@
       </div>
       <div id="summary" class="seg-scroll"></div>
       <ul id="company-list" class="card-list"></ul>
+      <div class="detail-placeholder" aria-hidden="true">企業を選ぶと、ここに詳細が表示されます</div>
       <p id="company-empty" class="empty" hidden>まだ企業が登録されていません。<br>右下の ＋ から追加しましょう。</p>
     </section>
 
@@ -185,11 +186,13 @@
   <button id="fab" class="fab" aria-label="追加"><svg><use href="#i-plus"/></svg></button>
 
   <nav class="tabbar">
+    <div class="side-brand"><img src="icons/icon.svg" alt="">就活管理</div>
     <button data-view="home" class="active"><svg><use href="#i-home"/></svg>ホーム</button>
     <button data-view="companies"><svg><use href="#i-building"/></svg>企業</button>
     <button data-view="schedule"><svg><use href="#i-calendar"/></svg>予定</button>
     <button data-view="compare"><svg><use href="#i-chart"/></svg>比較</button>
     <button data-view="more"><svg><use href="#i-menu"/></svg>その他</button>
+    <button class="side-add" data-add-company><svg><use href="#i-plus"/></svg>企業を追加</button>
   </nav>
 
   <datalist id="service-names">
@@ -217,6 +220,7 @@
         <button type="submit" class="link strong">保存</button>
       </div>
       <div class="dialog-body">
+        <div class="fcol">
         <section class="fgroup">
           <h3 class="fg-title">基本情報</h3>
           <label>企業名 <span class="req">*</span>
@@ -290,6 +294,8 @@
           </div>
         </section>
 
+        </div>
+        <div class="fcol">
         <details class="fgroup posting" id="posting-section">
           <summary><h3 class="fg-title">📄 職種・募集要項</h3></summary>
           <p class="note small">同じ会社でも職種・コースごとに条件が違う場合は、タブを追加して別々に入力できます。</p>
@@ -395,6 +401,7 @@
         </section>
 
         <button type="button" id="delete-company" class="btn danger full">この企業を削除</button>
+        </div>
       </div>
     </form>
   </dialog>

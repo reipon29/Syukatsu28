@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '2.2.0';
+const APP_VERSION = '2.3.0';
 const STORAGE_KEY = 'syukatsu.v1';
 
 const STATUSES = [
@@ -356,7 +356,9 @@ const TITLES = { home: 'ホーム', companies: '企業', schedule: '予定', com
 const SUB_VIEWS = { login: 'more', es: 'more' }; // 「その他」の中の画面
 let currentView = 'home';
 function showView(name) {
+  if (name !== currentView) closeDocked();
   currentView = name;
+  document.body.dataset.view = name;
   $$('.view').forEach(v => v.classList.toggle('active', v.id === 'view-' + name));
   const tab = SUB_VIEWS[name] || name;
   $$('.tabbar button').forEach(b => b.classList.toggle('active', b.dataset.view === tab));
@@ -368,7 +370,7 @@ function showView(name) {
   render();
   window.scrollTo(0, 0);
 }
-$$('.tabbar button').forEach(b => b.addEventListener('click', () => showView(b.dataset.view)));
+$$('.tabbar button[data-view]').forEach(b => b.addEventListener('click', () => showView(b.dataset.view)));
 $('#back-btn').addEventListener('click', () => showView(SUB_VIEWS[currentView] || 'home'));
 document.addEventListener('click', e => {
   const g = e.target.closest('[data-goto]');
@@ -520,6 +522,7 @@ function renderCompanies() {
   }).join('');
 
   $('#company-empty').hidden = state.companies.length > 0;
+  if (typeof markSelected === 'function') markSelected();
   if (state.companies.length > 0 && list.length === 0) {
     $('#company-list').innerHTML = '<p class="empty">該当する企業はありません。</p>';
   }
@@ -827,7 +830,7 @@ function openCompany(id, postingId) {
   if (!editing.postings.length) editing.postings.push(normalizePosting());
   curPosting = Math.max(0, editing.postings.findIndex(p => p.id === postingId));
   loadPostingForm();
-  $('#posting-section').open = hasPosting(editing) || Boolean(postingId);
+  $('#posting-section').open = hasPosting(editing) || Boolean(postingId) || wideMQ.matches;
   setPriority(editing.priority);
   fillRouteSelect(editing.route);
   companyPw.load(editing.pwd);
@@ -1577,11 +1580,33 @@ const POSTING_TEXT_LABELS = [
 ];
 const NOTE_KIND = { es: 'ES', interview: '面接', other: 'その他' };
 
+/* PC（広い画面）では企業一覧の右側に詳細を並べて表示する */
+const wideMQ = matchMedia('(min-width: 1024px)');
+const isDocked = () => wideMQ.matches && currentView === 'companies';
+function closeDocked() {
+  if (dDialog.open && dDialog.classList.contains('docked')) dDialog.close();
+  dDialog.classList.remove('docked');
+}
+dDialog.addEventListener('close', markSelected);
+function markSelected() {
+  const id = dDialog.open && dDialog.classList.contains('docked') ? detailId : null;
+  $$('#company-list .card').forEach(li => li.classList.toggle('selected', li.dataset.id === id));
+}
+wideMQ.addEventListener('change', closeDocked);
 function openDetail(id, postingId) {
   if (!findCompany(id)) return;
   detailId = id;
   renderDetail();
-  if (!dDialog.open) dDialog.showModal();
+  if (isDocked()) {
+    if (dDialog.open && !dDialog.classList.contains('docked')) dDialog.close();
+    dDialog.classList.add('docked');
+    if (!dDialog.open) dDialog.show();
+  } else {
+    if (dDialog.open && dDialog.classList.contains('docked')) dDialog.close();
+    dDialog.classList.remove('docked');
+    if (!dDialog.open) dDialog.showModal();
+  }
+  markSelected();
   const body = $('#detail-body');
   body.scrollTop = 0;
   if (postingId) {

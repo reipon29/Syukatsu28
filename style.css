@@ -473,3 +473,66 @@ details.posting:not([open]) { padding-bottom: 2px; }
 .candidates button.mine { background: var(--accent); color: #fff; }
 label.plain { display: block; font-size: 12px; color: var(--muted); font-weight: 600; }
 label.plain select { margin-top: 4px; }
+
+/* ============ PC（広い画面） ============ */
+.side-brand, .side-add, .detail-placeholder { display: none; }
+.card.selected { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft), var(--shadow); }
+@media (min-width: 1024px) {
+  :root { --side-w: 216px; --list-w: clamp(320px, 34vw, 440px); --top-h: 76px; }
+  body { padding: 0 0 40px var(--side-w); }
+  .topbar { padding: 20px 32px 12px; min-height: var(--top-h); box-sizing: border-box; }
+  main { max-width: 1080px; margin: 0; padding: 4px 32px 0; }
+
+  /* 左のサイドバー */
+  .tabbar {
+    top: 0; right: auto; width: var(--side-w); height: auto;
+    display: flex; flex-direction: column; gap: 2px; padding: 20px 12px;
+    border-top: none; border-right: 1px solid var(--border);
+  }
+  .tabbar button {
+    flex-direction: row; justify-content: flex-start; gap: 12px; font-size: 15px; color: var(--muted);
+    padding: 10px 12px; border-radius: 12px;
+  }
+  .tabbar button:hover { background: var(--surface-2); }
+  .tabbar button.active { background: var(--accent-soft); }
+  .side-brand { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 17px; padding: 0 10px 18px; }
+  .side-brand img { width: 30px; height: 30px; border-radius: 8px; }
+  .tabbar .side-add {
+    display: flex; margin-top: 14px; background: var(--accent); color: #fff; justify-content: center;
+  }
+  .tabbar .side-add:hover { background: var(--accent); filter: brightness(1.08); }
+  .fab { display: none; }
+  body[data-view=es] .fab { display: grid; bottom: 28px; right: 32px; }
+  .toast { bottom: 32px; margin-left: calc(var(--side-w) / 2); }
+  .card:hover { border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }
+
+  /* ホームは2列 */
+  #view-home.active { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
+  #view-home .stat-grid, #view-home .empty-hero { grid-column: 1 / -1; margin-bottom: 0; }
+  #view-home .panel { margin-bottom: 0; }
+
+  /* 企業：一覧と詳細を左右に並べる */
+  body[data-view=companies] main { max-width: none; margin: 0; }
+  #view-companies { width: var(--list-w); }
+  .detail-placeholder, dialog#detail-dialog.docked {
+    position: fixed; z-index: 15; margin: 0;
+    top: var(--top-h); bottom: 24px; right: 32px;
+    left: calc(var(--side-w) + 32px + var(--list-w) + 24px);
+    width: auto; max-width: none; height: auto; max-height: none;
+    border-radius: 20px; border: 1px solid var(--border); box-shadow: var(--shadow);
+  }
+  body[data-view=companies] .detail-placeholder {
+    display: grid; place-items: center; color: var(--faint); font-size: 14px;
+    border-style: dashed; box-shadow: none; z-index: 1;
+  }
+  dialog#detail-dialog.docked .dialog-head { padding-top: 8px; border-radius: 20px 20px 0 0; }
+  dialog#detail-dialog.docked .dialog-body { padding: 20px 24px 32px; }
+
+  /* 企業の編集は2列（左：基本情報など、右：職種・募集要項） */
+  dialog#company-dialog { max-width: 1120px; width: calc(100% - 64px); }
+  #company-form .dialog-body { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; padding: 20px; }
+  #company-form #delete-company { margin-top: 6px; }
+
+  /* 比較・予定 */
+  .bar-row { grid-template-columns: minmax(0, 260px) 1fr; }
+}
