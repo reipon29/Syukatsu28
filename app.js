@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '2.3.0';
+const APP_VERSION = '2.3.1';
 const STORAGE_KEY = 'syukatsu.v1';
 
 const STATUSES = [
@@ -1044,29 +1044,34 @@ $('#delete-company').addEventListener('click', () => {
 const POSTING_LABELS = [
   ['recruiter',    ['募集者の名称', '募集者', '募集企業', '採用企業', '会社名']],
   ['job',          ['募集職種', '職種', '募集コース', 'コース', '仕事内容', '業務内容']],
-  ['eligibility',  ['応募資格', '応募対象', '対象', '対象者', '募集対象']],
+  ['eligibility',  ['応募資格', '応募対象', '対象', '対象者', '募集対象', '応募条件', '応募要件', '必須スキル・経験', '必須スキル', '必須条件', '必須要件', '必須経験']],
   ['startDate',    ['入社時期', '入社日', '入社予定日']],
   ['contract',     ['契約期間', '雇用形態', '勤務形態', '雇用区分']],
   ['probation',    ['試用期間']],
   ['locations',    ['勤務地', '勤務場所', '就業場所', '勤務予定地', '配属先']],
   ['hours',        ['勤務時間', '就業時間', '勤務体系']],
-  ['salaryNote',   ['初任給', '給与', '給与・待遇', '基本給', '月給', '給与（月給）']],
+  ['salaryNote',   ['初任給', '給与', '給与・待遇', '基本給', '月給', '給与（月給）', '想定給与', '給与条件', '想定年収', '年俸', '報酬', '給与・報酬']],
   ['benefits',     ['福利厚生', '待遇', '社会保険', '待遇・福利厚生', '研修制度', '教育制度', '研修']],
   ['allowances',   ['諸手当', '手当']],
   ['commute',      ['通勤費', '交通費', '通勤手当']],
   ['raise',        ['昇給', '査定', '昇給・賞与']],
   ['bonusNote',    ['賞与', 'ボーナス']],
   ['holidaysNote', ['休日休暇', '休日・休暇', '休日', '休暇', '年間休日']],
-  ['hiring',       ['採用予定人数', '募集人数', '採用人数', '採用予定数']],
+  ['hiring',       ['採用予定人数', '募集人数', '採用人数', '採用予定数', '定員', '募集定員']],
+  ['hq',           ['本社所在地', '所在地', '本社']],
   ['note',         ['選考フロー', '選考方法', '選考プロセス', '提出書類', '選考の流れ', '応募方法', '選考ステップ']],
+  // 読み取らない見出し（前の項目に混ざらないよう区切りとして使う）
+  ['_skip',        ['求める人物像', 'ポジションの魅力', '歓迎スキル', '歓迎スキル・経験', '歓迎条件', '歓迎要件', '歓迎経験',
+                    '募集拠点', '設立', '資本金', '称号', '商号', '従業員数', '代表者', '売上高', '業務概要']],
 ];
 // 1〜2行で終わるはずの項目（ページ末尾のメニューなどを取り込まないよう行数を制限）
-const SHORT_FIELDS = new Set(['recruiter', 'startDate', 'contract', 'probation', 'commute', 'raise', 'bonusNote', 'holidaysNote', 'hiring', 'allowances']);
+const SHORT_FIELDS = new Set(['hq', 'recruiter', 'startDate', 'contract', 'probation', 'commute', 'raise', 'bonusNote', 'holidaysNote', 'hiring', 'allowances']);
 
 // 募集要項ではない見出し（ここで読み取りを止める）
 const STOP_LABELS = ['社風', '企業理念', '経営理念', '会社概要', '企業情報', '会社情報', 'メッセージ', 'よくある質問', 'FAQ',
   'お問い合わせ', '問い合わせ先', '社員紹介', '社員インタビュー', 'インタビュー', '働く環境', 'キャリアパス', '事業内容',
-  'プライバシーポリシー', '個人情報の取り扱い', 'ENTRY', 'エントリー', 'MYPAGE', 'マイページ', '採用担当より'];
+  'プライバシーポリシー', '個人情報の取り扱い', 'ENTRY', 'エントリー', 'MYPAGE', 'マイページ', '採用担当より',
+  '採用情報', '関連求人', '求人一覧', '応募する', 'この求人に応募する'];
 // 「賞与 年2回」のように、見出しと内容が1行に並んだ行（別の項目の中にあっても振り分ける）
 const INLINE_LABELS = [
   ['bonusNote', ['賞与', 'ボーナス']],
@@ -1145,7 +1150,7 @@ function parsePosting(raw) {
       if (rest) cur.lines.push(rest);
       continue;
     }
-    if (isStop(line)) { cur = null; continue; }
+    if (isStop(line) || isStop(tab[0])) { cur = null; continue; }
     const il = cur && matchInline(line);
     if (il) { inline.push(il); continue; }
     if (cur) cur.lines.push(line);
@@ -1161,7 +1166,7 @@ function parsePosting(raw) {
   });
   const out = {};
   segs.forEach(({ field, lines }) => {
-    if (!lines.length) return;
+    if (!lines.length || field === '_skip') return;
     out[field] = out[field] ? out[field] + '\n' + lines.join('\n') : lines.join('\n');
   });
   inline.forEach(({ field, text }) => { out[field] = out[field] ? out[field] + '\n' + text : text; });
@@ -1171,6 +1176,11 @@ function parsePosting(raw) {
       if (!out.raise && /^昇給/.test(piece)) out.raise = piece;
       if (!out.bonusNote && /^賞与/.test(piece)) out.bonusNote = piece;
     }
+  }
+  // 「業績により業績賞与の支給あり」のように文中に出てくるもの
+  for (const line of raw.split('\n').map(l => l.trim())) {
+    if (!out.bonusNote && /賞与/.test(line) && line.length <= 40 && !/^[【\[［■]/.test(line)) out.bonusNote = line;
+    if (!out.raise && /昇給/.test(line) && line.length <= 40 && !/^[【\[［■]/.test(line)) out.raise = line;
   }
   return out;
 }
@@ -1233,6 +1243,10 @@ function applyPosting(auto = false) {
       if (n) values.p_hiring = n[1];
       values.p_note = (values.p_note ? values.p_note + '\n' : '') + '採用予定人数: ' + text;
     } else if (field === 'note') values.p_note = (values.p_note ? values.p_note + '\n' : '') + text;
+    else if (field === 'hq') {
+      const hq = text.split('\n').map(l => l.replace(/^〒?\s*\d{3}-?\d{4}\s*/, '').trim()).filter(Boolean).join(' ');
+      if (hq) values.hq = hq;
+    }
     else values['p_' + field] = text;
   }
   // 数値の抽出
@@ -1240,6 +1254,22 @@ function applyPosting(auto = false) {
   const mySal = sal.length > 1 ? salaryForDegree(parsed.salaryNote, state.profile.degree) : null;
   if (sal.length === 1) values.p_salary = sal[0];
   else if (mySal) values.p_salary = mySal;
+  // 年俸・想定年収（万円で入力）
+  const annualM = (parsed.salaryNote || raw).match(/(?:年俸|想定年収|年収)[^\d\n]{0,8}(\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)\s*(万)?\s*円/);
+  const annual = annualM ? toYen(annualM[1], annualM[2]) : 0;
+  if (annual >= 1500000 && annual <= 30000000) values.p_annual = Math.round(annual / 10000);
+  const fixedOt = /(?:見込み|みなし|固定)残業/.test(parsed.salaryNote || raw);
+  // 企業名（「〇〇株式会社」だけの行）
+  if (!cForm.name.value.trim()) {
+    const nm = raw.split('\n').map(l => l.split('\t').pop().trim())
+      .find(l => /^(?:株式会社\S{1,25}|\S{1,25}株式会社)$/.test(l) && !/採用|求人/.test(l));
+    if (nm) values.name = nm;
+  }
+  // 職種名（「2028年新卒エンジニア職」など）
+  if (!cForm.p_title.value) {
+    const t = raw.split('\n').map(l => l.trim()).find(l => l.length <= 30 && !/株式会社|求人一覧/.test(l) && /新卒.*(?:職|コース|採用)$/.test(l));
+    if (t) values.p_title = t;
+  }
   const housing = (raw.match(/住宅(?:補助|手当)[^\n]*?(\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)\s*(万)?\s*円/) || []);
   if (housing[1]) values.p_housing = toYen(housing[1], housing[2]);
   const bonus = (parsed.bonusNote || '').match(/(\d+(?:\.\d+)?)\s*(?:ヶ月|か月|カ月|ヵ月|ケ月)/);
@@ -1294,6 +1324,8 @@ function applyPosting(auto = false) {
   $('#posting-section').open = true;
   const later = [];
   if (mySal) later.push(`初任給は${DEGREES[state.profile.degree].label}の ${mySal.toLocaleString('ja-JP')}円 にしました`);
+  if (values.p_annual && !values.p_salary) later.push(`年俸制のため「想定年収」に ${values.p_annual}万円 を入れました（月額にすると約${Math.round(values.p_annual / 12 * 10) / 10}万円）`);
+  if (fixedOt) later.push('見込み残業（固定残業代）を含む給与です。比較するときは注意してください');
   else if (sal.length > 1) later.push(`初任給の候補が ${sal.length} 件あります。自分に当てはまる額をタップしてください`);
   if (prev) later.push(`${String(state.profile.gradYear - 1).slice(2)}卒向け（前年度）の募集要項のようです。「前年度の情報」として記録しました`);
   later.forEach((m, i) => setTimeout(() => toast(m), 2000 * (i + 1)));
