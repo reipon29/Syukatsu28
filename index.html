@@ -145,7 +145,7 @@
       </div>
       <div class="panel">
         <h2>データ</h2>
-        <p class="note">データはこの端末のブラウザ内にのみ保存されます。機種変更や別端末で使う場合はバックアップを書き出して読み込んでください。<br>※ バックアップにはパスワードもそのまま含まれるので、人に渡したり公開しないでください。</p>
+        <p class="note">データはこの端末のブラウザ内にのみ保存されます。PCとスマホで使う場合は、片方で書き出したファイル（AirDrop・メール・iCloud Drive などで送る）をもう片方で読み込んでください。読み込むときに「追加・統合」を選べば、この端末のデータは消えません。<br>※ バックアップにはパスワードもそのまま含まれるので、人に渡したり公開しないでください。</p>
         <div class="btn-col">
           <button id="export-btn" class="btn">バックアップを書き出す</button>
           <label class="btn">バックアップを読み込む
@@ -527,6 +527,20 @@
         </div>
       </div>
     </form>
+  </dialog>
+
+  <!-- バックアップの読み込み -->
+  <dialog id="import-dialog" class="small-dialog">
+    <div class="dialog-body">
+      <h2>バックアップの読み込み</h2>
+      <p class="note" id="import-summary"></p>
+      <div class="btn-col">
+        <button type="button" class="btn primary" id="import-merge">追加・統合する（おすすめ）</button>
+        <button type="button" class="btn danger" id="import-replace">すべて置き換える</button>
+        <button type="button" class="btn" data-close>キャンセル</button>
+      </div>
+      <p class="note small">「追加・統合」はこの端末のデータを消さずに、ファイルにある企業・予定・メモを足します。同じ企業は更新日時が新しい方の内容を使い、予定・メモ・職種は両方を残します。<br>「すべて置き換え」はこの端末のデータを消してファイルの内容にします。</p>
+    </div>
   </dialog>
 
   <!-- 業界ガイド -->

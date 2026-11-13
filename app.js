@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '2.1.0';
+const APP_VERSION = '2.2.0';
 const STORAGE_KEY = 'syukatsu.v1';
 
 const STATUSES = [
@@ -1423,10 +1423,19 @@ $('#fab').addEventListener('click', () => (currentView === 'es' ? openStock(null
 
 /* ---------- backup ---------- */
 $('#export-btn').addEventListener('click', () => {
+  const name = `syukatsu-backup-${todayStr()}.json`;
   const blob = new Blob([JSON.stringify({ app: 'syukatsu', version: 2, exportedAt: new Date().toISOString(), ...state }, null, 2)], { type: 'application/json' });
+  if (isIOS && navigator.canShare) {
+    // iPhone では共有シートから「ファイルに保存」や AirDrop で送れるようにする
+    const file = new File([blob], name, { type: 'application/json' });
+    if (navigator.canShare({ files: [file] })) {
+      navigator.share({ files: [file] }).catch(() => {});
+      return;
+    }
+  }
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = `syukatsu-backup-${todayStr()}.json`;
+  a.download = name;
   document.body.append(a);
   a.click();
   a.remove();
@@ -1441,16 +1450,112 @@ $('#import-file').addEventListener('change', async e => {
     const data = JSON.parse(await file.text());
     if (!Array.isArray(data.companies)) throw new Error('形式が正しくありません');
     const next = normalizeState(data);
-    if (!confirm(`${next.companies.length} 社・サービス ${next.accounts.length} 件のデータを読み込みます。\n現在のデータは置き換えられます。よろしいですか？`)) return;
-    state = next;
-    save();
-    toast('読み込みました');
-    render();
-    migrateLegacy();
+    const preview = mergeState(state, next);
+    const r = preview.report;
+    const when = data.exportedAt ? new Date(data.exportedAt).toLocaleString('ja-JP', { dateStyle: 'short', timeStyle: 'short' }) : '';
+    $('#import-summary').innerHTML =
+      `ファイル${when ? `（${esc(when)} に書き出し）` : ''}：企業 ${next.companies.length} 社・サービス ${next.accounts.length} 件・ESストック ${next.stock.length} 件<br>` +
+      `統合すると：新しい企業 <b>${r.added}</b> 社、内容が変わる企業 <b>${r.updated}</b> 社、変化なし ${r.same} 社` +
+      (r.otherAdded ? `、サービス・ESストック ${r.otherAdded} 件を追加` : '');
+    pendingImport = { next, merged: preview.state };
+    iDialog.showModal();
   } catch (err) {
     alert('読み込みに失敗しました: ' + err.message);
   }
 });
+
+const iDialog = $('#import-dialog');
+let pendingImport = null;
+function finishImport(newState, msg) {
+  pendingImport = null;
+  iDialog.close();
+  state = newState;
+  save();
+  toast(msg);
+  render();
+  migrateLegacy();
+}
+iDialog.querySelector('[data-close]').addEventListener('click', () => { pendingImport = null; iDialog.close(); });
+$('#import-merge').addEventListener('click', () => {
+  if (pendingImport) finishImport(pendingImport.merged, '追加・統合しました');
+});
+$('#import-replace').addEventListener('click', () => {
+  if (!pendingImport) return;
+  if (!confirm('この端末のデータを消して、ファイルの内容に置き換えます。よろしいですか？')) return;
+  finishImport(pendingImport.next, '置き換えました');
+});
+
+/* 2つのデータを統合する（どちらのデータも消さない） */
+const nameKey = s => str(s).replace(/株式会社|（株）|\(株\)|㈱|[\s　]/g, '').toLowerCase();
+function unionById(a, b, pick) {
+  const map = new Map(a.map(x => [x.id, x]));
+  b.forEach(x => { map.set(x.id, map.has(x.id) ? pick(map.get(x.id), x) : x); });
+  return [...map.values()];
+}
+function mergeCompany(cur, inc) {
+  const incNewer = inc.updatedAt > cur.updatedAt;
+  const newer = incNewer ? inc : cur;
+  const older = incNewer ? cur : inc;
+  const pickNewer = (x, y) => (incNewer ? y : x);
+  const out = {
+    ...newer,
+    id: cur.id,
+    createdAt: Math.min(cur.createdAt, inc.createdAt),
+    updatedAt: Math.max(cur.updatedAt, inc.updatedAt),
+    postings: unionById(cur.postings, inc.postings, pickNewer).filter(postingHasData),
+    notes: unionById(cur.notes, inc.notes, pickNewer),
+    events: unionById(cur.events, inc.events, pickNewer),
+  };
+  // 新しい方で空欄の項目は、古い方の値で補う
+  ['industry', 'hq', 'locations', 'tokyo', 'route', 'url', 'loginId', 'memo'].forEach(k => { if (!out[k] && older[k]) out[k] = older[k]; });
+  if (!out.pwd && older.pwd) out.pwd = older.pwd;
+  if (!out.postings.length) out.postings = newer.postings;
+  const seen = new Set();
+  out.history = [...cur.history, ...inc.history]
+    .filter(h => { const k = h.status + '@' + h.at; if (seen.has(k)) return false; seen.add(k); return true; })
+    .sort((x, y) => x.at - y.at);
+  return out;
+}
+function mergeState(base, inc) {
+  const report = { added: 0, updated: 0, same: 0, otherAdded: 0 };
+  // サービス（ログイン元）
+  const accounts = base.accounts.map(a => ({ ...a }));
+  const accIdMap = {};
+  inc.accounts.forEach(a => {
+    const hit = accounts.find(x => x.id === a.id) || accounts.find(x => nameKey(x.name) === nameKey(a.name));
+    if (hit) {
+      accIdMap[a.id] = hit.id;
+      ['url', 'loginId', 'pwd', 'memo'].forEach(k => { if (!hit[k] && a[k]) hit[k] = a[k]; });
+    } else {
+      accounts.push({ ...a });
+      accIdMap[a.id] = a.id;
+      report.otherAdded++;
+    }
+  });
+  // 企業
+  const companies = [...base.companies];
+  inc.companies.forEach(c0 => {
+    const c = { ...c0, route: accIdMap[c0.route] || c0.route };
+    const i = companies.findIndex(x => x.id === c.id);
+    const j = i >= 0 ? i : companies.findIndex(x => nameKey(x.name) === nameKey(c.name));
+    if (j < 0) { companies.push(c); report.added++; return; }
+    const merged = mergeCompany(companies[j], c);
+    if (JSON.stringify(merged) === JSON.stringify(companies[j])) report.same++;
+    else { companies[j] = merged; report.updated++; }
+  });
+  // ESストック
+  const stock = [...base.stock];
+  inc.stock.forEach(s => {
+    const i = stock.findIndex(x => x.id === s.id);
+    if (i >= 0) { if (s.updatedAt > stock[i].updatedAt) stock[i] = s; return; }
+    if (stock.some(x => x.title === s.title && x.text === s.text)) return;
+    stock.push(s);
+    report.otherAdded++;
+  });
+  const out = { ...base, companies, accounts, stock, profile: base.profile };
+  if (!out.vault && inc.vault) out.vault = inc.vault;
+  return { state: out, report };
+}
 
 $('#clear-btn').addEventListener('click', () => {
   if (!confirm('すべてのデータを削除します。元に戻せません。よろしいですか？')) return;
