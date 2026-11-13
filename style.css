@@ -475,7 +475,7 @@ label.plain { display: block; font-size: 12px; color: var(--muted); font-weight:
 label.plain select { margin-top: 4px; }
 
 /* ============ PC（広い画面） ============ */
-.side-brand, .side-add, .detail-placeholder { display: none; }
+.side-brand, .tabbar .side-add, .detail-placeholder { display: none; }
 .card.selected { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft), var(--shadow); }
 @media (min-width: 1024px) {
   :root { --side-w: 216px; --list-w: clamp(320px, 34vw, 440px); --top-h: 76px; }
