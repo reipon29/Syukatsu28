@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '2.7.0';
+const APP_VERSION = '2.7.1';
 const STORAGE_KEY = 'syukatsu.v1';
 
 const STATUSES = [
@@ -250,6 +250,8 @@ function hasPosting(c) {
   return c.postings.some(postingHasData);
 }
 function accountById(id) { return state.accounts.find(a => a.id === id); }
+/** ボタン用の短いサービス名（「マイナビ2028（大学院生向け…）」→「マイナビ2028」） */
+const accShort = a => { const n = a.name.replace(/\s*[（(【\[].*$/, '').trim() || a.name; return n.length > 12 ? n.slice(0, 11) + '…' : n; };
 function routeName(c) {
   if (c.route === 'own') return '企業HP';
   return accountById(c.route)?.name || '';
@@ -754,7 +756,7 @@ function renderLogin() {
         ${url ? `<a class="primary" href="${esc(url)}" target="_blank" rel="noopener">マイページ ↗</a>` : ''}
         ${c.loginId ? `<button data-copy-id="c:${c.id}">IDコピー</button>` : ''}
         ${c.pwd ? `<button data-copy-pw="c:${c.id}">PWコピー</button>` : ''}
-        ${acc && safeUrl(acc.url) ? `<a href="${esc(acc.url)}" target="_blank" rel="noopener">${esc(acc.name)} ↗</a>` : ''}
+        ${acc && safeUrl(acc.url) ? `<a href="${esc(acc.url)}" target="_blank" rel="noopener" title="${esc(acc.name)}">${esc(accShort(acc))} ↗</a>` : ''}
       </div>
     </div>`;
   }).join('') : `<p class="note">${q ? '該当なし' : '企業の詳細画面で「エントリー経路」やマイページ情報を登録するとここに表示されます。'}</p>`;
@@ -1806,9 +1808,9 @@ function loginActions(c) {
   if (c.loginId) items.push(`<button data-act="copy-cid">IDコピー</button>`);
   if (pwText(c.pwd)) items.push(`<button data-act="copy-cpw">PWコピー</button>`);
   if (acc) {
-    if (safeUrl(acc.url)) items.push(`<a href="${esc(acc.url)}" target="_blank" rel="noopener">${esc(acc.name)} ↗</a>`);
-    if (acc.loginId) items.push(`<button data-act="copy-aid">${esc(acc.name)} ID</button>`);
-    if (pwText(acc.pwd)) items.push(`<button data-act="copy-apw">${esc(acc.name)} PW</button>`);
+    if (safeUrl(acc.url)) items.push(`<a href="${esc(acc.url)}" target="_blank" rel="noopener" title="${esc(acc.name)}">${esc(accShort(acc))} ↗</a>`);
+    if (acc.loginId) items.push(`<button data-act="copy-aid" title="${esc(acc.name)}">${esc(accShort(acc))} ID</button>`);
+    if (pwText(acc.pwd)) items.push(`<button data-act="copy-apw" title="${esc(acc.name)}">${esc(accShort(acc))} PW</button>`);
   }
   return items.length ? `<div class="actions">${items.join('')}</div>` : '';
 }
