@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '2.3.2';
+const APP_VERSION = '2.4.0';
 const STORAGE_KEY = 'syukatsu.v1';
 
 const STATUSES = [
@@ -58,6 +58,23 @@ const POSTING_NUM = METRICS.map(m => m.key);
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 const str = v => (v == null ? '' : String(v));
 const numOrNull = v => (v === '' || v == null || !Number.isFinite(Number(v)) ? null : Number(v));
+/** 「25.5万」「255,000円」「２５５０００」などを円に。1000未満は万円とみなす（「25」→ 250000） */
+function parseYen(v) {
+  const t = String(v ?? '').normalize('NFKC').replace(/[,，\s円]/g, '').replace(/^(?:月給|月額)/, '');
+  if (!t) return null;
+  const m = t.match(/^(\d+(?:\.\d+)?)(万)?(\d{1,4})?$/);
+  if (!m) return NaN;
+  let n = Number(m[1]);
+  if (m[2]) n = n * 10000 + (m[3] ? Number(m[3]) : 0);
+  else if (m[3]) return NaN;
+  else if (n < 1000) n *= 10000;
+  return Math.round(n);
+}
+const YEN_FIELDS = new Set(['salary', 'housing']);
+const parseNumField = (k, v) => {
+  if (YEN_FIELDS.has(k)) { const n = parseYen(v); return Number.isFinite(n) ? n : null; }
+  return numOrNull(String(v ?? '').normalize('NFKC').replace(/,/g, '').trim());
+};
 const isCipher = v => v && typeof v === 'object' && typeof v.iv === 'string' && typeof v.ct === 'string';
 
 function normalizePwd(v) {
@@ -364,7 +381,8 @@ function showView(name) {
   $$('.tabbar button').forEach(b => b.classList.toggle('active', b.dataset.view === tab));
   $('#page-title').textContent = TITLES[name];
   $('#back-btn').hidden = !SUB_VIEWS[name];
-  $('#fab').hidden = !['home', 'companies', 'es'].includes(name);
+  $('#fab').hidden = !['home', 'companies', 'schedule', 'es'].includes(name);
+  $('#fab').setAttribute('aria-label', name === 'schedule' ? '予定を追加' : name === 'es' ? '文章を追加' : '企業を追加');
   const now = new Date();
   $('#topbar-sub').textContent = name === 'home' ? `${now.getMonth() + 1}月${now.getDate()}日(${WD[now.getDay()]})` : '';
   render();
@@ -922,6 +940,7 @@ function loadPostingForm() {
   POSTING_TEXT.forEach(k => { cForm['p_' + k].value = p[k]; });
   POSTING_NUM.forEach(k => { cForm['p_' + k].value = p[k] ?? ''; });
   POSTING_FLAGS.forEach(f => { cForm['p_' + f.key].checked = p[f.key]; });
+  updateYenPreviews();
   cForm.p_tokyo.value = p.tokyo;
   cForm.p_applied.checked = p.applied;
   cForm.p_prevYear.checked = p.prevYear;
@@ -932,12 +951,23 @@ function savePostingForm() {
   const p = editing.postings[curPosting];
   if (!p) return;
   POSTING_TEXT.forEach(k => { p[k] = cForm['p_' + k].value.trim(); });
-  POSTING_NUM.forEach(k => { p[k] = numOrNull(cForm['p_' + k].value); });
+  POSTING_NUM.forEach(k => { p[k] = parseNumField(k, cForm['p_' + k].value); });
   POSTING_FLAGS.forEach(f => { p[f.key] = cForm['p_' + f.key].checked; });
   p.tokyo = cForm.p_tokyo.value;
   p.applied = cForm.p_applied.checked;
   p.prevYear = cForm.p_prevYear.checked;
 }
+/** 初任給・住宅補助の欄の下に、読み取った金額を表示する */
+function updateYenPreviews() {
+  $$('.yen-preview').forEach(el => {
+    const raw = cForm[el.dataset.for].value.trim();
+    const n = parseYen(raw);
+    el.classList.toggle('bad', Number.isNaN(n));
+    el.textContent = !raw ? '' : Number.isNaN(n) ? '数字で入力してください（例 255000 / 25.5万）'
+      : `= ${n.toLocaleString('ja-JP')}円${String(n) === raw ? '' : ' として保存'}`;
+  });
+}
+$$('[data-yen]').forEach(inp => inp.addEventListener('input', updateYenPreviews));
 function renderPostingTabs() {
   const ps = editing.postings;
   $('#posting-tabs').innerHTML = ps.map((p, i) => {
@@ -999,8 +1029,15 @@ function readCompanyForm() {
 
 cForm.addEventListener('submit', async e => {
   e.preventDefault();
+  const badYen = $$('[data-yen]').find(inp => Number.isNaN(parseYen(inp.value)));
+  if (badYen) {
+    $('#posting-section').open = true;
+    badYen.focus();
+    toast('金額を読み取れません。数字で入力してください（例 255000 / 25.5万）');
+    return;
+  }
   readCompanyForm();
-  if (!editing.name) { cForm.name.focus(); return; }
+  if (!editing.name) { cForm.name.focus(); toast('企業名を入力してください'); return; }
   editing.updatedAt = Date.now();
   editing.postings = editing.postings.filter(postingHasData);
   const idx = state.companies.findIndex(c => c.id === editing.id);
@@ -1221,7 +1258,7 @@ function showSalaryCandidates() {
 }
 $('#salary-candidates').addEventListener('click', e => {
   const b = e.target.closest('button[data-v]');
-  if (b) { cForm.p_salary.value = b.dataset.v; toast('比較用の初任給にセットしました'); }
+  if (b) { cForm.p_salary.value = b.dataset.v; updateYenPreviews(); toast('比較用の初任給にセットしました'); }
 });
 cForm.p_salaryNote.addEventListener('input', showSalaryCandidates);
 
@@ -1314,6 +1351,7 @@ function applyPosting(auto = false) {
   const prev = isPrevYearPosting(raw, state.profile.gradYear);
   if (prev && !cForm.p_prevYear.checked) { cForm.p_prevYear.checked = true; renderPostingTabs(); }
   showSalaryCandidates();
+  updateYenPreviews();
   updateTokyoHint();
   let industryMsg = '';
   if (!$('#industry-select').value) {
@@ -1351,8 +1389,22 @@ const eForm = $('#event-form');
 let evCtx = null; // { cid, eid }
 
 function openEvent(cid, eid) {
+  if (!state.companies.length) {
+    toast('先に企業を登録してください。予定は企業ごとに登録します');
+    openCompany(null);
+    return;
+  }
   evCtx = { cid, eid };
   const ev = eid ? findCompany(cid)?.events.find(x => x.id === eid) : null;
+  // 企業を指定せずに開いたとき（予定画面・ホーム）は企業を選んでもらう
+  const pick = !cid;
+  $('#event-company-row').hidden = !pick;
+  if (pick) {
+    const cs = [...state.companies].sort((a, b) =>
+      (ACTIVE_STATUSES.has(b.status) - ACTIVE_STATUSES.has(a.status)) || b.updatedAt - a.updatedAt);
+    $('#event-company').innerHTML = '<option value="">企業を選んでください</option>' +
+      cs.map(c => `<option value="${c.id}">${esc(c.name)}（${STATUS_MAP[c.status].label}）</option>`).join('');
+  }
   $('#event-dialog-title').textContent = ev ? '予定・締切を編集' : '予定・締切を追加';
   eForm.title.value = ev?.title || '';
   eForm.date.value = ev?.date || todayStr();
@@ -1361,7 +1413,7 @@ function openEvent(cid, eid) {
   eForm.done.checked = Boolean(ev?.done);
   $('#delete-event').hidden = !ev;
   eDialog.showModal();
-  if (!ev) setTimeout(() => eForm.title.focus(), 50);
+  if (!ev) setTimeout(() => (pick ? $('#event-company') : eForm.title).focus(), 50);
 }
 function afterChange() {
   save();
@@ -1370,6 +1422,10 @@ function afterChange() {
 }
 eForm.addEventListener('submit', e => {
   e.preventDefault();
+  if (!evCtx.cid) {
+    evCtx.cid = eForm.cid.value;
+    if (!evCtx.cid) { toast('企業を選んでください'); $('#event-company').focus(); return; }
+  }
   const c = findCompany(evCtx.cid);
   if (!c) return;
   const data = {
@@ -1383,7 +1439,7 @@ eForm.addEventListener('submit', e => {
   c.updatedAt = Date.now();
   eDialog.close();
   afterChange();
-  toast('予定を保存しました');
+  toast(`${c.name} に予定を保存しました`);
 });
 eDialog.querySelector('[data-close]').addEventListener('click', () => eDialog.close());
 $('#delete-event').addEventListener('click', () => {
@@ -1454,7 +1510,12 @@ $('#delete-account').addEventListener('click', () => {
 });
 
 /* ---------- FAB ---------- */
-$('#fab').addEventListener('click', () => (currentView === 'es' ? openStock(null) : openCompany(null)));
+$('#fab').addEventListener('click', () => {
+  if (currentView === 'es') openStock(null);
+  else if (currentView === 'schedule') openEvent(null, null);
+  else openCompany(null);
+});
+$('#add-event-btn').addEventListener('click', () => openEvent(null, null));
 
 /* ---------- backup ---------- */
 $('#export-btn').addEventListener('click', () => {
@@ -1668,16 +1729,16 @@ function loginActions(c) {
 function postingCard(c, p, i, multi) {
   const tk = postingTokyo(c, p);
   const title = p.title || (multi ? postingTitle(p, i) : '募集要項');
-  const metrics = METRICS.filter(m => m.key !== 'hiring' || p.hiring != null).map(m => {
-    const v = p[m.key];
-    return `<div class="metric ${v == null ? 'empty-m' : ''}"><div class="mv">${v == null ? '—' : esc(m.fmt(v))}</div><div class="ml">${m.label}</div></div>`;
-  }).join('');
+  const filled = METRICS.filter(m => p[m.key] != null);
+  const missing = METRICS.filter(m => p[m.key] == null && m.key !== 'hiring');
+  const metrics = filled.map(m => `<div class="kv ${m.key === 'salary' ? 'key' : ''}"><span class="kl">${m.label.replace(/（.*）/, '')}</span><span class="kvv">${esc(m.fmt(p[m.key]))}</span></div>`).join('');
   const flags = POSTING_FLAGS.filter(f => p[f.key]).map(f => `<span class="tag">${f.label}</span>`).join('');
   const rows = POSTING_TEXT_LABELS.filter(([k]) => p[k]).map(([k, l]) => `<dt>${l}</dt><dd>${esc(p[k])}</dd>`).join('');
   return `<div class="pcard" data-pid="${p.id}">
     <div class="pcard-top"><span class="pcard-title">${esc(title)}</span>${p.prevYear ? '<span class="prev-pill">前年度の情報</span>' : ''}${p.applied ? '<span class="applied-pill">応募</span>' : ''}${tokyoBadgeCode(tk)}</div>
     ${p.location ? `<div class="note small">📍 ${esc(p.location)}</div>` : ''}
-    <div class="metric-grid">${metrics}</div>
+    ${metrics ? `<div class="kv-grid">${metrics}</div>` : ''}
+    ${missing.length ? `<div class="kv-missing">未入力: ${missing.map(m => m.label.replace(/（.*）/, '')).join('・')}</div>` : ''}
     ${flags ? `<div>${flags}</div>` : ''}
     ${rows ? `<details><summary>募集要項の詳細を見る</summary><dl class="dl">${rows}</dl></details>` : ''}
   </div>`;
@@ -1696,7 +1757,19 @@ function renderDetail() {
   }
   const rn = routeName(c);
   const ps = c.postings.filter(postingHasData);
-  const evs = [...c.events].sort((a, b) => (a.done - b.done) || evKey(a).localeCompare(evKey(b)));
+  const evs = [...c.events].sort((a, b) => evKey(a).localeCompare(evKey(b)));
+  const openEvs = evs.filter(ev => !ev.done);
+  const doneEvs = evs.filter(ev => ev.done).reverse();
+  const evRow = ev => `
+        <div class="ev-row ${ev.done ? 'done' : ev.date < todayStr() ? 'overdue' : ''}">
+          <input type="checkbox" data-eid="${ev.id}" ${ev.done ? 'checked' : ''} aria-label="完了">
+          ${whenBox(ev.date)}
+          <div class="ev-main" data-act="edit-event" data-eid="${ev.id}">
+            <div class="ev-title">${esc(ev.title)}</div>
+            <div class="ev-date">${!ev.done && ev.date < todayStr() ? '期限切れ・' : ''}${ev.time || '終日'}${ev.place ? '・' + esc(ev.place) : ''}</div>
+          </div>
+          <a class="gcal" href="${esc(gcalUrl(ev, c.name))}" target="_blank" rel="noopener" title="Googleカレンダーに追加" aria-label="Googleカレンダーに追加"><svg><use href="#i-calendar"/></svg></a>
+        </div>`;
   const tk = TOKYO[bestTokyo(c)];
 
   $('#detail-body').innerHTML = `
@@ -1719,15 +1792,8 @@ function renderDetail() {
 
     <section class="dsec">
       <div class="dsec-head"><h3>予定・締切</h3><button class="btn small" data-act="add-event">＋ 追加</button></div>
-      ${evs.length ? evs.map(ev => `
-        <div class="ev-row ${ev.done ? 'done' : ev.date < todayStr() ? 'overdue' : ''}">
-          <input type="checkbox" data-eid="${ev.id}" ${ev.done ? 'checked' : ''} aria-label="完了">
-          <div class="ev-main" data-act="edit-event" data-eid="${ev.id}">
-            <div class="ev-title">${esc(ev.title)}</div>
-            <div class="ev-date">${!ev.done && ev.date < todayStr() ? '期限切れ・' : ''}${fmtDate(ev.date, true)}${ev.time ? ' ' + ev.time : ''}${ev.place ? '・' + esc(ev.place) : ''}</div>
-          </div>
-          <a class="gcal" href="${esc(gcalUrl(ev, c.name))}" target="_blank" rel="noopener">Googleカレンダー</a>
-        </div>`).join('') : '<p class="muted-empty">予定・締切はまだありません。</p>'}
+      ${openEvs.map(evRow).join('') || '<p class="muted-empty">今後の予定はありません。「＋ 追加」から面接日や締切を登録できます。</p>'}
+      ${doneEvs.length ? `<details class="done-evs"><summary>完了した予定（${doneEvs.length}件）</summary>${doneEvs.map(evRow).join('')}</details>` : ''}
     </section>
 
     <section class="dsec">
@@ -1944,7 +2010,7 @@ function renderHome() {
         <div class="mi-sub">${ev.date < today ? '<b class="overdue-text">期限切れ</b>・' : ''}${esc(c.name)}${ev.time ? '・' + ev.time : ''}${ev.place ? '・' + esc(ev.place) : ''}</div>
       </div>
       <input type="checkbox" data-cid="${c.id}" data-eid="${ev.id}" aria-label="完了">
-    </div>`).join('')}</div>` : '<p class="muted-empty">今後の予定はありません。企業の詳細画面から追加できます。</p>';
+    </div>`).join('')}</div>` : '<p class="muted-empty">今後の予定はありません。右上の「＋ 追加」から登録できます。</p>';
 
   const todo = cs.filter(c => IN_PROCESS.has(c.status) && !nextEvent(c));
   $('#home-todo-panel').hidden = !todo.length;

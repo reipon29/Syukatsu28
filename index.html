@@ -41,7 +41,7 @@
     <section id="view-home" class="view active">
       <div id="home-stats" class="stat-grid"></div>
       <div class="panel">
-        <div class="panel-head"><h2>直近の予定・締切</h2><button class="link small" data-goto="schedule">すべて見る</button></div>
+        <div class="panel-head"><h2>直近の予定・締切</h2><span><button class="link small" data-add-event="">＋ 追加</button><button class="link small" data-goto="schedule">すべて見る</button></span></div>
         <div id="home-events"></div>
       </div>
       <div class="panel" id="home-todo-panel">
@@ -97,10 +97,13 @@
     <section id="view-schedule" class="view">
       <div class="row-between">
         <label class="check-inline"><input id="show-done" type="checkbox"> 完了・過去も表示</label>
-        <button id="ics-btn" class="btn small">カレンダーに書き出す</button>
+        <div class="btn-inline">
+          <button id="ics-btn" class="btn small">カレンダーに書き出す</button>
+          <button id="add-event-btn" class="btn small primary">＋ 予定を追加</button>
+        </div>
       </div>
       <div id="schedule-list"></div>
-      <p id="schedule-empty" class="empty" hidden>予定はありません。<br>企業の詳細画面から予定・締切を追加できます。</p>
+      <p id="schedule-empty" class="empty" hidden>予定はありません。<br>「＋ 予定を追加」から登録できます。</p>
     </section>
 
     <!-- 比較 -->
@@ -213,7 +216,7 @@
 
   <!-- 企業の編集 -->
   <dialog id="company-dialog" class="sheet">
-    <form id="company-form" method="dialog">
+    <form id="company-form" method="dialog" novalidate>
       <div class="dialog-head">
         <button type="button" class="link" data-close>キャンセル</button>
         <h2 id="company-dialog-title">企業を追加</h2>
@@ -333,7 +336,7 @@
             <label>入社時期<input name="p_startDate" autocomplete="off" placeholder="例: 2028年4月"></label>
             <label>契約期間<input name="p_contract" autocomplete="off" placeholder="例: 期間の定めなし"></label>
             <label>試用期間<input name="p_probation" autocomplete="off" placeholder="例: あり（4か月）"></label>
-            <label>採用予定人数（人）<input name="p_hiring" type="number" inputmode="numeric" min="0" step="1" placeholder="例 50"></label>
+            <label>採用予定人数（人）<input name="p_hiring" type="number" inputmode="numeric" min="0" step="any" placeholder="例 50"></label>
           </div>
 
           <h4 class="sub-section">勤務時間・働き方</h4>
@@ -346,8 +349,8 @@
             <label class="check-inline"><input type="checkbox" name="p_remote"> リモート可</label>
           </div>
           <div class="grid2">
-            <label>月平均残業（時間）<input name="p_overtime" type="number" inputmode="decimal" min="0" step="1" placeholder="例 20"></label>
-            <label>年間休日（日）<input name="p_holidays" type="number" inputmode="numeric" min="0" step="1" placeholder="例 125"></label>
+            <label>月平均残業（時間）<input name="p_overtime" type="number" inputmode="decimal" min="0" step="any" placeholder="例 20"></label>
+            <label>年間休日（日）<input name="p_holidays" type="number" inputmode="numeric" min="0" step="any" placeholder="例 125"></label>
           </div>
           <label>休日・休暇
             <input name="p_holidaysNote" autocomplete="off" placeholder="例: 完全週休2日・祝日・年末年始">
@@ -355,11 +358,12 @@
 
           <h4 class="sub-section">給与</h4>
           <div class="grid2">
-            <label>初任給（月給・円）<span class="sub">比較に使う額</span>
-              <input name="p_salary" type="number" inputmode="numeric" min="0" step="1000" placeholder="例 250000">
+            <label>初任給（月給）<span class="sub">比較に使う額</span>
+              <input name="p_salary" inputmode="decimal" autocomplete="off" placeholder="例 255000 / 25.5万" data-yen>
+              <span class="yen-preview" data-for="p_salary"></span>
             </label>
             <label>想定年収（万円）<span class="sub">任意</span>
-              <input name="p_annual" type="number" inputmode="decimal" min="0" step="1" placeholder="例 400">
+              <input name="p_annual" type="number" inputmode="decimal" min="0" step="any" placeholder="例 400">
             </label>
           </div>
           <div id="salary-candidates" class="candidates" hidden></div>
@@ -367,14 +371,15 @@
             <textarea name="p_salaryNote" rows="3"></textarea>
           </label>
           <div class="grid2">
-            <label>賞与（年 ◯ヶ月）<input name="p_bonus" type="number" inputmode="decimal" min="0" step="0.1" placeholder="例 4.5"></label>
+            <label>賞与（年 ◯ヶ月）<input name="p_bonus" type="number" inputmode="decimal" min="0" step="any" placeholder="例 4.5"></label>
             <label>賞与の詳細<input name="p_bonusNote" autocomplete="off" placeholder="例: 年2回(6月・12月)"></label>
           </div>
           <label>昇給<input name="p_raise" autocomplete="off" placeholder="例: 年1回（6月）"></label>
 
           <h4 class="sub-section">福利厚生・手当</h4>
-          <label>住宅補助（月額・円）<span class="sub">比較に使う額</span>
-            <input name="p_housing" type="number" inputmode="numeric" min="0" step="500" placeholder="例 30000">
+          <label>住宅補助（月額）<span class="sub">比較に使う額</span>
+            <input name="p_housing" inputmode="decimal" autocomplete="off" placeholder="例 30000 / 3万" data-yen>
+            <span class="yen-preview" data-for="p_housing"></span>
           </label>
           <label>福利厚生（住宅補助・制度 など）
             <textarea name="p_benefits" rows="3"></textarea>
@@ -411,6 +416,9 @@
     <form id="event-form" method="dialog">
       <div class="dialog-body">
         <h2 id="event-dialog-title">予定・締切</h2>
+        <label id="event-company-row">企業 <span class="req">*</span>
+          <select name="cid" id="event-company"></select>
+        </label>
         <label>内容 <span class="req">*</span>
           <input name="title" required list="event-title-list" autocomplete="off" placeholder="例: ES締切 / 一次面接">
           <datalist id="event-title-list">
