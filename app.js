@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '2.5.0';
+const APP_VERSION = '2.7.0';
 const STORAGE_KEY = 'syukatsu.v1';
 
 const STATUSES = [
@@ -599,7 +599,7 @@ function renderSchedule() {
         <div class="sched-item ${ev.done ? 'done' : ''}">
           <input type="checkbox" data-cid="${c.id}" data-eid="${ev.id}" ${ev.done ? 'checked' : ''} aria-label="完了">
           <span class="sched-time">${ev.time ? `${ev.time}${ev.endTime ? `<small>〜${ev.endTime}</small>` : ''}` : '終日'}</span>
-          <div class="sched-main" data-cid="${c.id}">
+          <div class="sched-main" data-cid="${c.id}" data-eid="${ev.id}">
             <div class="sched-title">${esc(ev.title)}</div>
             <div class="sched-company">${esc(c.name)}${ev.place ? '・' + esc(ev.place) : ''}</div>
           </div>
@@ -622,7 +622,7 @@ $('#schedule-list').addEventListener('change', e => {
 $('#ics-btn').addEventListener('click', exportIcs);
 $('#schedule-list').addEventListener('click', e => {
   const m = e.target.closest('.sched-main');
-  if (m) openDetail(m.dataset.cid);
+  if (m) openEvent(m.dataset.cid, m.dataset.eid);
 });
 
 /* ---------- 比較 ---------- */
@@ -857,7 +857,7 @@ cForm.url.addEventListener('input', updateOpenUrl);
 
 function openCompany(id, postingId) {
   const src = id ? state.companies.find(c => c.id === id) : null;
-  editing = src ? structuredClone(src) : normalizeCompany({ name: '', createdAt: Date.now() });
+  editing = src ? structuredClone(src) : normalizeCompany({ name: '', status: 'entry', createdAt: Date.now() });
   $('#company-dialog-title').textContent = src ? '企業を編集' : '企業を追加';
   ['name', 'status', 'hq', 'locations', 'tokyo', 'url', 'loginId', 'memo'].forEach(k => { cForm[k].value = editing[k]; });
   setIndustry(editing.industry);
@@ -890,7 +890,9 @@ function currentIndustry() {
   return v === '__other' ? cForm.industryOther.value.trim() : v;
 }
 function industryGuessText() {
-  return [cForm.name.value, cForm.p_job.value, cForm.p_raw.value, cForm.p_recruiter.value].join('\n');
+  // 企業名・募集者名は重く見る
+  const names = [cForm.name.value, cForm.p_recruiter.value].join('\n');
+  return [names, names, names, cForm.p_job.value, cForm.p_raw.value].join('\n');
 }
 function updateIndustryUi() {
   const sel = $('#industry-select');
@@ -1102,9 +1104,9 @@ const POSTING_LABELS = [
   ['contract',     ['契約期間', '雇用形態', '勤務形態', '雇用区分']],
   ['probation',    ['試用期間']],
   ['locations',    ['勤務地', '勤務場所', '就業場所', '勤務予定地', '配属先']],
-  ['hours',        ['勤務時間', '就業時間', '勤務体系']],
+  ['hours',        ['勤務時間', '就業時間', '勤務体系', '時間外労働', '残業時間', '残業']],
   ['salaryNote',   ['初任給', '給与', '給与・待遇', '基本給', '月給', '給与（月給）', '想定給与', '給与条件', '想定年収', '年俸', '報酬', '給与・報酬']],
-  ['benefits',     ['福利厚生', '待遇', '社会保険', '待遇・福利厚生', '研修制度', '教育制度', '研修']],
+  ['benefits',     ['福利厚生', '待遇', '社会保険', '待遇・福利厚生', '研修制度', '教育制度', '研修', '人材開発制度', '人材育成制度']],
   ['allowances',   ['諸手当', '手当']],
   ['commute',      ['通勤費', '交通費', '通勤手当']],
   ['raise',        ['昇給', '査定', '昇給・賞与']],
@@ -1115,7 +1117,7 @@ const POSTING_LABELS = [
   ['note',         ['選考フロー', '選考方法', '選考プロセス', '提出書類', '選考の流れ', '応募方法', '選考ステップ']],
   // 読み取らない見出し（前の項目に混ざらないよう区切りとして使う）
   ['_skip',        ['求める人物像', 'ポジションの魅力', '歓迎スキル', '歓迎スキル・経験', '歓迎条件', '歓迎要件', '歓迎経験',
-                    '募集拠点', '設立', '資本金', '称号', '商号', '従業員数', '代表者', '売上高', '業務概要']],
+                    '募集拠点', '受動喫煙防止措置', '受動喫煙対策', '設立', '資本金', '称号', '商号', '従業員数', '代表者', '売上高', '業務概要']],
 ];
 // 1〜2行で終わるはずの項目（ページ末尾のメニューなどを取り込まないよう行数を制限）
 const SHORT_FIELDS = new Set(['hq', 'recruiter', 'startDate', 'contract', 'probation', 'commute', 'raise', 'bonusNote', 'holidaysNote', 'hiring', 'allowances']);
@@ -1283,14 +1285,64 @@ function isPrevYearPosting(raw, gradYear) {
   const pat = y => new RegExp(`${y}年(?:度|卒|3月)|${String(y).slice(2)}卒|${y}年\\s*3月`);
   return pat(gradYear - 1).test(raw) && !pat(gradYear).test(raw);
 }
+/** 募集職種の欄から職種名の一覧を取り出す（「総合職\nバックオフィス職」→ 2つ） */
+function detectJobs(jobText) {
+  if (!jobText) return [];
+  let names = jobText.split('\n').map(l => l.trim().replace(/^[・■●◆\-－]\s*/, '')).filter(l => l && !/^※/.test(l));
+  if (names.length === 1) names = names[0].split(/\s*[／/、]\s*/).filter(Boolean);
+  const ok = names.length >= 2 && names.length <= 6 && names.every(n => n.length <= 20 && !/[。．]/.test(n));
+  return ok ? [...new Set(names)] : [];
+}
+/** その行が「総合職：〜」「総合職（修士卒）〜」のように、どの職種の行か（なければ null） */
+function lineJob(line, jobs) {
+  const t = line.trim().replace(/^[・■●◆\-－]\s*/, '');
+  return [...jobs].sort((a, b) => b.length - a.length)
+    .find(j => t.startsWith(j) && (t.length === j.length || /^[\s（(：:【\[]/.test(t.slice(j.length)))) || null;
+}
+/** 募集要項から、ほかの職種だけに当てはまる行を除いたテキスト */
+function rawForJob(raw, jobs, job) {
+  return raw.split('\n').flatMap(line => {
+    const j = lineJob(line, jobs);
+    if (j && j !== job) return [];
+    if (j === job && line.trim() !== job) return [line.replace(new RegExp(`^(\\s*)${job.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*[：:]\\s*`), '$1')];
+    return [line];
+  }).join('\n');
+}
 function applyPosting(auto = false) {
   const raw = cForm.p_raw.value;
   if (!raw.trim()) { if (!auto) toast('募集要項のテキストを貼り付けてください'); return; }
+  const jobs = editing.postings.length === 1 && !cForm.p_title.value.trim() ? detectJobs(parsePosting(raw).job) : [];
+  if (!jobs.length) { fillPostingFromText(raw, auto); return; }
+
+  const specific = raw.split('\n').some(l => lineJob(l, jobs) && l.trim() !== lineJob(l, jobs));
+  const split = confirm(`募集職種が ${jobs.length}つ 見つかりました：\n${jobs.map(j => '・' + j).join('\n')}\n\n` +
+    (specific ? '給与・勤務地など、職種ごとに違う項目があります。\n\n' : '') +
+    'OK → 職種ごとにタブを分けて入力\nキャンセル → 1つにまとめて入力（条件が同じとき）');
+  if (!split) { fillPostingFromText(raw, auto, { title: jobs.join('・') }); return; }
+
+  // 会社全体の勤務地には、すべての職種の勤務地を入れておく
+  const allLoc = parsePosting(raw).locations;
+  if (allLoc && !cForm.locations.value.trim()) cForm.locations.value = allLoc;
+  const results = [];
+  jobs.forEach((job, i) => {
+    if (i > 0) addPosting(false);
+    results.push({ job, ...fillPostingFromText(rawForJob(raw, jobs, job), auto, { title: job, quiet: true, perPosting: true }) });
+    cForm.p_raw.value = raw;
+  });
+  switchPosting(0);
+  $('#posting-section').open = true;
+  const sal = results.map(r => `${r.job} ${r.salary ? r.salary.toLocaleString('ja-JP') + '円' : '初任給なし'}`).join(' / ');
+  toast(`${jobs.length}つの職種に分けて入力しました（${sal}）。タブで切り替えて確認してください`);
+  const later = [...new Set(results.flatMap(r => r.later || []).filter(m => !/^初任給/.test(m)))];
+  later.forEach((m, i) => setTimeout(() => toast(m), 2500 * (i + 1)));
+}
+/** 募集要項のテキストを、いま選んでいる職種の欄に読み取って入れる */
+function fillPostingFromText(raw, auto = false, opts = {}) {
   const parsed = parsePosting(raw);
   const values = {}; // フォーム要素名 → 値
   for (const [field, text] of Object.entries(parsed)) {
     // 職種が複数あるときは、その職種の勤務地として入れる
-    if (field === 'locations') values[editing.postings.length > 1 ? 'p_location' : 'locations'] = text;
+    if (field === 'locations') values[opts.perPosting || editing.postings.length > 1 ? 'p_location' : 'locations'] = text;
     else if (field === 'hiring') {
       const n = text.match(/(\d+)\s*(?:名|人)/);
       if (n) values.p_hiring = n[1];
@@ -1319,7 +1371,8 @@ function applyPosting(auto = false) {
     if (nm) values.name = nm;
   }
   // 職種名（「2028年新卒エンジニア職」など）
-  if (!cForm.p_title.value) {
+  if (opts.title && !cForm.p_title.value) values.p_title = opts.title;
+  if (!cForm.p_title.value && !values.p_title) {
     const t = raw.split('\n').map(l => l.trim()).find(l => l.length <= 30 && !/株式会社|求人一覧/.test(l) && /新卒.*(?:職|コース|採用)$/.test(l));
     if (t) values.p_title = t;
   }
@@ -1351,12 +1404,13 @@ function applyPosting(auto = false) {
 
   const names = Object.keys(values);
   if (!names.length && !Object.values(flags).some(Boolean)) {
+    if (opts.quiet) return {};
     if (auto) toast('自動で読み取れる見出しが見つかりませんでした（原文は保存されます）');
     else alert('項目を読み取れませんでした。\n「勤務地」「初任給」などの見出しが1行ずつになっているか確認してください。');
     return;
   }
   const filled = names.filter(n => String(cForm[n].value).trim() && String(cForm[n].value).trim() !== String(values[n]).trim());
-  const overwrite = filled.length > 0 && confirm(`すでに入力済みの項目が ${filled.length} 件あります。読み取った内容で上書きしますか？\n（キャンセル → 空欄の項目だけ入力）`);
+  const overwrite = filled.length > 0 && !opts.quiet && confirm(`すでに入力済みの項目が ${filled.length} 件あります。読み取った内容で上書きしますか？\n（キャンセル → 空欄の項目だけ入力）`);
   let count = 0;
   for (const n of names) {
     if (String(cForm[n].value).trim() && !overwrite) continue;
@@ -1374,7 +1428,7 @@ function applyPosting(auto = false) {
     const g = guessIndustries(industryGuessText())[0];
     if (g) { setIndustry(g.name); industryMsg = `（業界は「${g.name}」と推定）`; }
   } else updateIndustryUi();
-  toast(`${count} 項目を入力しました${industryMsg}。内容を確認して保存してください`);
+  if (!opts.quiet) toast(`${count} 項目を入力しました${industryMsg}。内容を確認して保存してください`);
   $('#posting-section').open = true;
   const later = [];
   if (mySal) later.push(`初任給は${DEGREES[state.profile.degree].label}の ${mySal.toLocaleString('ja-JP')}円 にしました`);
@@ -1382,7 +1436,9 @@ function applyPosting(auto = false) {
   if (fixedOt) later.push('見込み残業（固定残業代）を含む給与です。比較するときは注意してください');
   else if (sal.length > 1) later.push(`初任給の候補が ${sal.length} 件あります。自分に当てはまる額をタップしてください`);
   if (prev) later.push(`${String(state.profile.gradYear - 1).slice(2)}卒向け（前年度）の募集要項のようです。「前年度の情報」として記録しました`);
+  if (opts.quiet) return { count, salary: Number(cForm.p_salary.value) || null, later };
   later.forEach((m, i) => setTimeout(() => toast(m), 2000 * (i + 1)));
+  return { count, later };
 }
 $('#parse-posting').addEventListener('click', () => applyPosting(false));
 // 貼り付けたら自動で読み取る
@@ -1429,6 +1485,11 @@ function openEvent(cid, eid) {
   eForm.place.value = ev?.place || '';
   eForm.done.checked = Boolean(ev?.done);
   $('#delete-event').hidden = !ev;
+  const c = cid ? findCompany(cid) : null;
+  $('#event-company-info').hidden = !c;
+  $('#event-company-name').textContent = c ? c.name : '';
+  $('#event-cal').hidden = !ev;
+  if (ev) $('#event-google').href = gcalUrl(ev, c.name);
   eDialog.showModal();
   if (!ev) setTimeout(() => (pick ? $('#event-company') : eForm.title).focus(), 50);
 }
@@ -1461,6 +1522,12 @@ eForm.addEventListener('submit', e => {
   toast(`${c.name} に予定を保存しました`);
 });
 eDialog.querySelector('[data-close]').addEventListener('click', () => eDialog.close());
+$('#event-open-company').addEventListener('click', () => { eDialog.close(); openDetail(evCtx.cid); });
+$('#event-apple').addEventListener('click', () => {
+  const c = findCompany(evCtx.cid);
+  const ev = c?.events.find(x => x.id === evCtx.eid);
+  if (ev) openIcs([{ c, ev }], `${ev.date}-${ev.title}`);
+});
 $('#delete-event').addEventListener('click', () => {
   const c = findCompany(evCtx.cid);
   if (!c || !confirm('この予定を削除しますか？')) return;
@@ -1780,7 +1847,7 @@ function renderDetail() {
             <div class="ev-title">${esc(ev.title)}</div>
             <div class="ev-date">${!ev.done && ev.date < todayStr() ? '期限切れ・' : ''}${timeRange(ev) || '終日'}${ev.place ? '・' + esc(ev.place) : ''}</div>
           </div>
-          <a class="gcal" href="${esc(gcalUrl(ev, c.name))}" target="_blank" rel="noopener" title="Googleカレンダーに追加" aria-label="Googleカレンダーに追加"><svg><use href="#i-calendar"/></svg></a>
+          <button class="gcal" data-act="ics-event" data-eid="${ev.id}" title="Appleカレンダーに追加" aria-label="Appleカレンダーに追加"><svg><use href="#i-calendar"/></svg></button>
         </div>`;
   const tk = TOKYO[bestTokyo(c)];
 
@@ -1864,6 +1931,7 @@ $('#detail-body').addEventListener('click', e => {
   switch (t.dataset.act) {
     case 'add-event': openEvent(c.id, null); break;
     case 'edit-event': openEvent(c.id, t.dataset.eid); break;
+    case 'ics-event': { const ev = c.events.find(x => x.id === t.dataset.eid); if (ev) openIcs([{ c, ev }], `${ev.date}-${ev.title}`); break; }
     case 'add-note': openNote(c.id, null); break;
     case 'edit-note': openNote(c.id, t.dataset.nid); break;
     case 'copy-cid': copyText(c.loginId, 'ID'); break;
@@ -1989,7 +2057,7 @@ function renderHome() {
   const cs = state.companies;
   const empty = cs.length === 0;
   $('#home-empty').hidden = !empty;
-  $$('#view-home > .panel, #home-stats').forEach(el => { el.hidden = empty; });
+  $$('#view-home > .panel, #home-stats, #home-interest').forEach(el => { el.hidden = empty; });
   if (empty) return;
 
   const today = todayStr();
@@ -2016,12 +2084,19 @@ function renderHome() {
   $('#home-events').innerHTML = shown.length ? `<div class="mini-list">${shown.map(({ c, ev }) => `
     <div class="mini-item">
       ${whenBox(ev.date)}
-      <div class="mi-main" data-open="${c.id}">
+      <div class="mi-main" data-edit-cid="${c.id}" data-edit-eid="${ev.id}">
         <div class="mi-title">${esc(ev.title)}</div>
         <div class="mi-sub">${ev.date < today ? '<b class="overdue-text">期限切れ</b>・' : ''}${esc(c.name)}${ev.time ? '・' + timeRange(ev) : ''}${ev.place ? '・' + esc(ev.place) : ''}</div>
       </div>
       <input type="checkbox" data-cid="${c.id}" data-eid="${ev.id}" aria-label="完了">
     </div>`).join('')}</div>` : '<p class="muted-empty">今後の予定はありません。右上の「＋ 追加」から登録できます。</p>';
+
+  const interest = cs.filter(c => c.status === 'interest');
+  $('#home-interest').hidden = !interest.length;
+  $('#home-interest').innerHTML = interest.length ? `
+    <div class="ib-text"><b>「興味あり」のままの企業が ${interest.length}社 あります</b>
+      <span>エントリー済みなら「エントリー済」にすると、選考中の数や予定の確認に反映されます。</span></div>
+    <button class="btn small primary" data-bulk-entry>まとめてエントリー済にする</button>` : '';
 
   const todo = cs.filter(c => IN_PROCESS.has(c.status) && !nextEvent(c));
   $('#home-todo-panel').hidden = !todo.length;
@@ -2041,8 +2116,20 @@ function renderHome() {
     </div>`).join('');
 }
 $('#view-home').addEventListener('click', e => {
+  if (e.target.closest('[data-bulk-entry]')) {
+    const list = state.companies.filter(c => c.status === 'interest');
+    if (!list.length || !confirm(`「興味あり」の ${list.length}社 をすべて「エントリー済」にしますか？`)) return;
+    const now = Date.now();
+    list.forEach(c => { c.status = 'entry'; c.history.push({ status: 'entry', at: now }); c.updatedAt = now; });
+    save();
+    render();
+    toast(`${list.length}社 を「エントリー済」にしました`);
+    return;
+  }
   const add = e.target.closest('[data-add-event]');
   if (add) { openEvent(add.dataset.addEvent, null); return; }
+  const edit = e.target.closest('[data-edit-eid]');
+  if (edit) { openEvent(edit.dataset.editCid, edit.dataset.editEid); return; }
   const open = e.target.closest('[data-open]');
   if (open) { openDetail(open.dataset.open); return; }
   const stat = e.target.closest('[data-stat]');
@@ -2064,40 +2151,59 @@ $('#view-home').addEventListener('change', e => {
 });
 
 /* ---------- カレンダー書き出し（.ics） ---------- */
-function exportIcs() {
-  const icsText = t => String(t).replace(/\\/g, '\\\\').replace(/;/g, '\;').replace(/,/g, '\\,').replace(/\r?\n/g, '\\n');
+function buildIcs(items) {
+  const icsText = t => String(t).replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\r?\n/g, '\\n');
   const pad = n => String(n).padStart(2, '0');
   const now = new Date();
   const stamp = `${now.getUTCFullYear()}${pad(now.getUTCMonth() + 1)}${pad(now.getUTCDate())}T${pad(now.getUTCHours())}${pad(now.getUTCMinutes())}00Z`;
-  const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//syukatsu//JP', 'CALSCALE:GREGORIAN', 'X-WR-CALNAME:就活'];
-  let n = 0;
-  state.companies.forEach(c => c.events.forEach(ev => {
-    if (ev.done) return;
+  const hm = t => t.replace(':', '') + '00';
+  const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//syukatsu//JP', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH'];
+  items.forEach(({ c, ev }) => {
     const d = ev.date.replace(/-/g, '');
     lines.push('BEGIN:VEVENT', `UID:${ev.id}@syukatsu`, `DTSTAMP:${stamp}`, `SUMMARY:${icsText(`【${c.name}】${ev.title}`)}`);
     if (ev.time) {
-      const hm = t => t.replace(':', '') + '00';
       lines.push(`DTSTART:${d}T${hm(ev.time)}`, `DTEND:${d}T${hm(endTimeOf(ev))}`);
     } else {
       const [y, mo, da] = ev.date.split('-').map(Number);
       const nx = new Date(y, mo - 1, da + 1);
       lines.push(`DTSTART;VALUE=DATE:${d}`, `DTEND;VALUE=DATE:${nx.getFullYear()}${pad(nx.getMonth() + 1)}${pad(nx.getDate())}`);
     }
-    if (ev.place) lines.push(`LOCATION:${icsText(ev.place)}`);
+    if (ev.place) {
+      lines.push(`LOCATION:${icsText(ev.place)}`);
+      if (/^https?:\/\//.test(ev.place)) lines.push(`URL:${ev.place}`);
+    }
+    // 通知: 時刻ありは1時間前、終日（締切など）は前日の9時
+    lines.push('BEGIN:VALARM', 'ACTION:DISPLAY', `DESCRIPTION:${icsText(ev.title)}`,
+      `TRIGGER:${ev.time ? '-PT1H' : '-PT15H'}`, 'END:VALARM');
     lines.push('END:VEVENT');
-    n++;
-  }));
+  });
   lines.push('END:VCALENDAR');
-  if (!n) { toast('書き出す予定がありません'); return; }
-  const blob = new Blob([lines.join('\r\n')], { type: 'text/calendar' });
+  return lines.join('\r\n');
+}
+/** .ics を開く。iPhone・iPad はカレンダーの「追加」画面が出る形で開き、それ以外はファイルとして保存する */
+function openIcs(items, name) {
+  const text = buildIcs(items);
+  if (isIOS) {
+    location.href = 'data:text/calendar;charset=utf-8,' + encodeURIComponent(text);
+    return;
+  }
+  const blob = new Blob([text], { type: 'text/calendar' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = `syukatsu-${todayStr()}.ics`;
+  a.download = `${name.replace(/[\\/:*?"<>|]/g, '_')}.ics`;
   document.body.append(a);
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-  toast(`${n}件の予定を書き出しました。ファイルを開くとカレンダーに追加できます`);
+  toast('カレンダーのファイルを保存しました。開くとカレンダーに追加できます');
+}
+function exportIcs() {
+  const today = todayStr();
+  const items = [];
+  state.companies.forEach(c => c.events.forEach(ev => { if (!ev.done && ev.date >= today) items.push({ c, ev }); }));
+  if (!items.length) { toast('追加する今後の予定がありません'); return; }
+  if (!confirm(`今後の予定 ${items.length}件 をカレンダーに追加します。\n※前に追加した予定をもう一度追加すると、カレンダー上で重複することがあります。`)) return;
+  openIcs(items, `syukatsu-${today}`);
 }
 
 /* ---------- 外部リンクを Safari で開く ---------- */
@@ -2122,6 +2228,21 @@ document.addEventListener('click', e => {
   e.preventDefault();
   openInSafari(a.href);
 }, true);
+
+/* ---------- 表示テーマ ---------- */
+const darkMQ = matchMedia('(prefers-color-scheme: dark)');
+function applyTheme(t) {
+  document.documentElement.dataset.theme = t;
+  const dark = t === 'dark' || (t === 'auto' && darkMQ.matches);
+  $('#theme-color').content = dark ? '#101114' : '#f5f6f8';
+  $('#theme-select').value = t;
+}
+applyTheme(document.documentElement.dataset.theme || 'light');
+darkMQ.addEventListener('change', () => applyTheme(document.documentElement.dataset.theme));
+$('#theme-select').addEventListener('change', e => {
+  try { localStorage.setItem('syukatsu.theme', e.target.value); } catch {}
+  applyTheme(e.target.value);
+});
 
 /* ---------- init ---------- */
 showView('home');

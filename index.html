@@ -5,8 +5,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
   <title>就活管理</title>
   <meta name="description" content="就職活動の企業・選考状況・予定を管理するアプリ">
-  <meta name="theme-color" content="#f5f6f8" media="(prefers-color-scheme: light)">
-  <meta name="theme-color" content="#101114" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#f5f6f8" id="theme-color">
+  <script>
+    // 表示テーマ（標準はライト）。画面が一瞬暗くならないよう、読み込みの最初に設定する
+    (function () {
+      var t = 'light';
+      try { t = localStorage.getItem('syukatsu.theme') || 'light'; } catch (e) {}
+      document.documentElement.dataset.theme = t;
+    })();
+  </script>
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -40,6 +47,7 @@
     <!-- ホーム -->
     <section id="view-home" class="view active">
       <div id="home-stats" class="stat-grid"></div>
+      <div id="home-interest" class="info-banner" hidden></div>
       <div class="panel">
         <div class="panel-head"><h2>直近の予定・締切</h2><span><button class="link small" data-add-event="">＋ 追加</button><button class="link small" data-goto="schedule">すべて見る</button></span></div>
         <div id="home-events"></div>
@@ -55,7 +63,7 @@
       </div>
       <div id="home-empty" class="empty-hero" hidden>
         <p class="eh-title">就活管理へようこそ</p>
-        <p class="note">まずは気になる企業を登録しましょう。採用サイトの募集要項を貼り付けると、条件が自動で入力されます。</p>
+        <p class="note">エントリーした企業を登録しましょう。採用サイトの募集要項を貼り付けると、条件が自動で入力されます。</p>
         <button class="btn primary" data-add-company>＋ 企業を追加</button>
       </div>
     </section>
@@ -98,7 +106,7 @@
       <div class="row-between">
         <label class="check-inline nowrap"><input id="show-done" type="checkbox"> 完了・過去も表示</label>
         <div class="btn-inline">
-          <button id="ics-btn" class="btn small" title="iPhone・Googleなどのカレンダーに取り込めるファイルを書き出します">書き出し</button>
+          <button id="ics-btn" class="btn small" title="今後の予定をまとめてAppleカレンダーなどに追加します">カレンダーに一括追加</button>
           <button id="add-event-btn" class="btn small primary">＋ 予定を追加</button>
         </div>
       </div>
@@ -146,6 +154,16 @@
           <label class="plain">卒業予定<select id="profile-year"></select></label>
           <label class="plain">学歴<select id="profile-degree"></select></label>
         </div>
+      </div>
+      <div class="panel">
+        <h2>表示</h2>
+        <label class="plain">テーマ
+          <select id="theme-select">
+            <option value="light">ライト（明るい）</option>
+            <option value="dark">ダーク（暗い）</option>
+            <option value="auto">端末の設定に合わせる</option>
+          </select>
+        </label>
       </div>
       <div class="panel">
         <h2>データ</h2>
@@ -416,6 +434,10 @@
     <form id="event-form" method="dialog">
       <div class="dialog-body">
         <h2 id="event-dialog-title">予定・締切</h2>
+        <div id="event-company-info" class="ev-company" hidden>
+          <span id="event-company-name"></span>
+          <button type="button" class="link small" id="event-open-company">企業の詳細 ›</button>
+        </div>
         <label id="event-company-row">企業 <span class="req">*</span>
           <select name="cid" id="event-company"></select>
         </label>
@@ -434,6 +456,10 @@
         <p class="note small ev-time-note">時刻を空欄にすると終日の予定になります。</p>
         <label>場所・URL<input name="place" autocomplete="off"></label>
         <label class="check-inline"><input name="done" type="checkbox"> 完了</label>
+        <div class="cal-row" id="event-cal" hidden>
+          <button type="button" class="btn small" id="event-apple"><svg><use href="#i-calendar"/></svg>Appleカレンダー</button>
+          <a class="btn small" id="event-google" target="_blank" rel="noopener">Googleカレンダー</a>
+        </div>
         <div class="btn-row">
           <button type="button" id="delete-event" class="btn danger left">削除</button>
           <button type="button" class="btn" data-close>キャンセル</button>
