@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '2.4.0';
+const APP_VERSION = '2.5.0';
 const STORAGE_KEY = 'syukatsu.v1';
 
 const STATUSES = [
@@ -83,7 +83,7 @@ function normalizePwd(v) {
   return '';
 }
 function normalizeEvent(ev) {
-  return { id: str(ev.id) || uid(), title: str(ev.title), date: ev.date, time: str(ev.time), place: str(ev.place), done: Boolean(ev.done) };
+  return { id: str(ev.id) || uid(), title: str(ev.title), date: ev.date, time: str(ev.time), endTime: ev.time ? str(ev.endTime) : '', place: str(ev.place), done: Boolean(ev.done) };
 }
 function normalizePosting(p = {}) {
   const out = { id: str(p.id) || uid(), tokyo: TOKYO[p.tokyo] ? p.tokyo : '', applied: Boolean(p.applied), prevYear: Boolean(p.prevYear) };
@@ -215,6 +215,14 @@ function relLabel(dateStr) {
   return `${-n}日前`;
 }
 const evKey = e => e.date + (e.time || '99');
+/** 「14:00〜15:30」「14:00」など */
+const timeRange = ev => (ev.time ? ev.time + (ev.endTime ? '〜' + ev.endTime : '') : '');
+/** 終了時刻（未入力なら開始の1時間後、日をまたぐ場合は 23:59） */
+function endTimeOf(ev) {
+  if (ev.endTime) return ev.endTime;
+  const [h, m] = ev.time.split(':').map(Number);
+  return h + 1 >= 24 ? '23:59' : `${String(h + 1).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
 const charCount = t => [...(t || '').replace(/\r?\n/g, '')].length;
 const findCompany = id => state.companies.find(c => c.id === id);
 function fmtDay(ts) {
@@ -269,10 +277,8 @@ function gcalUrl(ev, companyName) {
   const d = ev.date.replace(/-/g, '');
   let dates;
   if (ev.time) {
-    const [h, m] = ev.time.split(':').map(Number);
-    const start = `${d}T${String(h).padStart(2, '0')}${String(m).padStart(2, '0')}00`;
-    const end = h + 1 >= 24 ? `${d}T235900` : `${d}T${String(h + 1).padStart(2, '0')}${String(m).padStart(2, '0')}00`;
-    dates = `${start}/${end}`;
+    const hm = t => t.replace(':', '') + '00';
+    dates = `${d}T${hm(ev.time)}/${d}T${hm(endTimeOf(ev))}`;
   } else {
     const [y, mo, da] = ev.date.split('-').map(Number);
     const next = new Date(y, mo - 1, da + 1);
@@ -520,9 +526,16 @@ function renderCompanies() {
     if (ne) {
       const n = daysFromToday(ne.date);
       const cls = n === 0 ? 'today' : n <= 3 ? 'soon' : '';
-      nextHtml = `<div class="card-next ${cls}">${esc(ne.title)}・${fmtDate(ne.date)}${ne.time ? ' ' + ne.time : ''}（${relLabel(ne.date)}）</div>`;
+      nextHtml = `<div class="card-next ${cls}">${esc(ne.title)}・${fmtDate(ne.date)}${ne.time ? ' ' + timeRange(ne) : ''}（${relLabel(ne.date)}）</div>`;
     }
     const rn = routeName(c);
+    const keyP = c.postings.find(p => p.applied && postingHasData(p)) || c.postings.find(p => p.salary != null) || c.postings.find(postingHasData);
+    const facts = keyP ? [
+      keyP.salary != null && `初任給 <b>${Math.round(keyP.salary / 1000) / 10}万円</b>`,
+      keyP.salary == null && keyP.annual != null && `年収 <b>${keyP.annual}万円</b>`,
+      keyP.holidays != null && `休日 <b>${keyP.holidays}日</b>`,
+      keyP.overtime != null && `残業 <b>${keyP.overtime}h</b>`,
+    ].filter(Boolean) : [];
     return `<li class="card ${st.cls}" data-id="${c.id}">
       <div class="card-top">
         <span class="card-name">${esc(c.name)}</span>
@@ -535,6 +548,7 @@ function renderCompanies() {
         ${rn ? `<span>経路: ${esc(rn)}</span>` : ''}
         ${appliedText(c)}
       </div>
+      ${facts.length ? `<div class="card-facts">${facts.map(f => `<span>${f}</span>`).join('')}</div>` : ''}
       ${nextHtml}
     </li>`;
   }).join('');
@@ -584,7 +598,7 @@ function renderSchedule() {
       ${arr.map(({ c, ev }) => `
         <div class="sched-item ${ev.done ? 'done' : ''}">
           <input type="checkbox" data-cid="${c.id}" data-eid="${ev.id}" ${ev.done ? 'checked' : ''} aria-label="完了">
-          <span class="sched-time">${ev.time || '終日'}</span>
+          <span class="sched-time">${ev.time ? `${ev.time}${ev.endTime ? `<small>〜${ev.endTime}</small>` : ''}` : '終日'}</span>
           <div class="sched-main" data-cid="${c.id}">
             <div class="sched-title">${esc(ev.title)}</div>
             <div class="sched-company">${esc(c.name)}${ev.place ? '・' + esc(ev.place) : ''}</div>
@@ -628,9 +642,11 @@ function compareTargets() {
     }));
   return rows;
 }
+/** 「株式会社」などを省いた企業名（狭い場所で使う） */
+const shortName = n => n.replace(/株式会社|有限会社|合同会社|[（(]株[)）]/g, '').trim() || n;
 const rowLabel = r => {
   const sub = [r.title, r.p.prevYear ? '前年度' : ''].filter(Boolean).join('・');
-  return `${esc(r.c.name)}${sub ? `<small>${esc(sub)}</small>` : ''}`;
+  return `${esc(shortName(r.c.name))}${sub ? `<small>${esc(sub)}</small>` : ''}`;
 };
 const rowText = r => r.c.name + (r.title ? `（${r.title}）` : '');
 function renderCompare() {
@@ -1409,6 +1425,7 @@ function openEvent(cid, eid) {
   eForm.title.value = ev?.title || '';
   eForm.date.value = ev?.date || todayStr();
   eForm.time.value = ev?.time || '';
+  eForm.endTime.value = ev?.endTime || '';
   eForm.place.value = ev?.place || '';
   eForm.done.checked = Boolean(ev?.done);
   $('#delete-event').hidden = !ev;
@@ -1429,10 +1446,12 @@ eForm.addEventListener('submit', e => {
   const c = findCompany(evCtx.cid);
   if (!c) return;
   const data = {
-    title: eForm.title.value.trim(), date: eForm.date.value, time: eForm.time.value,
+    title: eForm.title.value.trim(), date: eForm.date.value, time: eForm.time.value, endTime: eForm.time.value ? eForm.endTime.value : '',
     place: eForm.place.value.trim(), done: eForm.done.checked,
   };
   if (!data.title || !data.date) return;
+  if (!data.time && eForm.endTime.value) { toast('開始時刻も入力してください'); eForm.time.focus(); return; }
+  if (data.endTime && data.endTime <= data.time) { toast('終了時刻は開始時刻より後にしてください'); eForm.endTime.focus(); return; }
   const ev = evCtx.eid && c.events.find(x => x.id === evCtx.eid);
   if (ev) Object.assign(ev, data);
   else c.events.push({ id: uid(), ...data });
@@ -1748,25 +1767,18 @@ function renderDetail() {
   if (!c) { dDialog.close(); return; }
   const st = STATUS_MAP[c.status];
   const ne = nextEvent(c);
-  let nextHtml = '';
-  if (ne) {
-    const n = daysFromToday(ne.date);
-    nextHtml = `<div class="next-box ${n === 0 ? 'today' : n <= 3 ? 'soon' : ''}" data-act="edit-event" data-eid="${ne.id}">
-      <div class="nb-main"><div class="nb-sub">次の予定</div><div class="nb-title">${esc(ne.title)}</div>
-      <div class="nb-sub">${fmtDate(ne.date)}${ne.time ? ' ' + ne.time : ''}（${relLabel(ne.date)}）${ne.place ? '・' + esc(ne.place) : ''}</div></div></div>`;
-  }
   const rn = routeName(c);
   const ps = c.postings.filter(postingHasData);
   const evs = [...c.events].sort((a, b) => evKey(a).localeCompare(evKey(b)));
   const openEvs = evs.filter(ev => !ev.done);
   const doneEvs = evs.filter(ev => ev.done).reverse();
   const evRow = ev => `
-        <div class="ev-row ${ev.done ? 'done' : ev.date < todayStr() ? 'overdue' : ''}">
+        <div class="ev-row ${ev.done ? 'done' : ev.date < todayStr() ? 'overdue' : ''} ${ne && ev.id === ne.id ? 'next' : ''}">
           <input type="checkbox" data-eid="${ev.id}" ${ev.done ? 'checked' : ''} aria-label="完了">
           ${whenBox(ev.date)}
           <div class="ev-main" data-act="edit-event" data-eid="${ev.id}">
             <div class="ev-title">${esc(ev.title)}</div>
-            <div class="ev-date">${!ev.done && ev.date < todayStr() ? '期限切れ・' : ''}${ev.time || '終日'}${ev.place ? '・' + esc(ev.place) : ''}</div>
+            <div class="ev-date">${!ev.done && ev.date < todayStr() ? '期限切れ・' : ''}${timeRange(ev) || '終日'}${ev.place ? '・' + esc(ev.place) : ''}</div>
           </div>
           <a class="gcal" href="${esc(gcalUrl(ev, c.name))}" target="_blank" rel="noopener" title="Googleカレンダーに追加" aria-label="Googleカレンダーに追加"><svg><use href="#i-calendar"/></svg></a>
         </div>`;
@@ -1787,7 +1799,6 @@ function renderDetail() {
         ${tokyoBadge(c)}
       </div>
       ${loginActions(c)}
-      ${nextHtml}
     </div>
 
     <section class="dsec">
@@ -1995,7 +2006,7 @@ function renderHome() {
   const count = f => cs.filter(f).length;
   const stats = [
     { v: count(c => IN_PROCESS.has(c.status)), u: '社', l: '選考中', go: 'active' },
-    { v: week, u: '件', l: '7日以内の予定', go: 'schedule' },
+    { v: week, u: '件', l: '7日以内', go: 'schedule' },
     { v: count(c => c.status === 'offer'), u: '社', l: '内定', go: 'offer' },
     { v: count(c => bestTokyo(c) === 'only' && ACTIVE_STATUSES.has(c.status)), u: '社', l: '東京◎', go: 'tokyo' },
   ];
@@ -2007,7 +2018,7 @@ function renderHome() {
       ${whenBox(ev.date)}
       <div class="mi-main" data-open="${c.id}">
         <div class="mi-title">${esc(ev.title)}</div>
-        <div class="mi-sub">${ev.date < today ? '<b class="overdue-text">期限切れ</b>・' : ''}${esc(c.name)}${ev.time ? '・' + ev.time : ''}${ev.place ? '・' + esc(ev.place) : ''}</div>
+        <div class="mi-sub">${ev.date < today ? '<b class="overdue-text">期限切れ</b>・' : ''}${esc(c.name)}${ev.time ? '・' + timeRange(ev) : ''}${ev.place ? '・' + esc(ev.place) : ''}</div>
       </div>
       <input type="checkbox" data-cid="${c.id}" data-eid="${ev.id}" aria-label="完了">
     </div>`).join('')}</div>` : '<p class="muted-empty">今後の予定はありません。右上の「＋ 追加」から登録できます。</p>';
@@ -2065,9 +2076,8 @@ function exportIcs() {
     const d = ev.date.replace(/-/g, '');
     lines.push('BEGIN:VEVENT', `UID:${ev.id}@syukatsu`, `DTSTAMP:${stamp}`, `SUMMARY:${icsText(`【${c.name}】${ev.title}`)}`);
     if (ev.time) {
-      const [h, m] = ev.time.split(':').map(Number);
-      const endH = Math.min(h + 1, 23);
-      lines.push(`DTSTART:${d}T${pad(h)}${pad(m)}00`, `DTEND:${d}T${pad(endH)}${pad(h + 1 > 23 ? 59 : m)}00`);
+      const hm = t => t.replace(':', '') + '00';
+      lines.push(`DTSTART:${d}T${hm(ev.time)}`, `DTEND:${d}T${hm(endTimeOf(ev))}`);
     } else {
       const [y, mo, da] = ev.date.split('-').map(Number);
       const nx = new Date(y, mo - 1, da + 1);

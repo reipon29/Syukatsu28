@@ -186,7 +186,7 @@ main { max-width: 720px; margin: 0 auto; padding: 4px 16px 0; }
 .stat { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 12px 10px; box-shadow: var(--shadow); cursor: pointer; text-align: left; }
 .stat .sv { font-size: 24px; font-weight: 800; line-height: 1.1; font-variant-numeric: tabular-nums; }
 .stat .sv small { font-size: 12px; font-weight: 600; color: var(--muted); margin-left: 1px; }
-.stat .sl { font-size: 11px; color: var(--muted); margin-top: 4px; font-weight: 600; }
+.stat .sl { font-size: 11px; color: var(--muted); margin-top: 4px; font-weight: 600; white-space: nowrap; }
 @media (max-width: 380px) { .stat-grid { grid-template-columns: repeat(2, 1fr); } }
 .funnel { display: grid; gap: 8px; }
 .funnel-row { display: grid; grid-template-columns: 6.5em 1fr 2.5em; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
@@ -251,7 +251,7 @@ main { max-width: 720px; margin: 0 auto; padding: 4px 16px 0; }
 }
 .sched-item.done { opacity: .5; }
 .sched-item.done .sched-title { text-decoration: line-through; }
-.sched-time { font-variant-numeric: tabular-nums; font-size: 13px; color: var(--muted); width: 40px; flex: none; font-weight: 600; }
+.sched-time { font-variant-numeric: tabular-nums; font-size: 13px; color: var(--muted); width: 46px; flex: none; font-weight: 600; }
 .sched-main { flex: 1; min-width: 0; cursor: pointer; }
 .sched-title { font-weight: 700; }
 .sched-company { font-size: 12.5px; color: var(--muted); }
@@ -425,6 +425,8 @@ details.posting:not([open]) { padding-bottom: 2px; }
 .done-evs { margin-top: 6px; border-top: 1px solid var(--border); padding-top: 8px; }
 .done-evs summary { font-size: 13px; color: var(--muted); font-weight: 600; cursor: pointer; }
 .done-evs .ev-row:first-of-type { border-top: none; }
+.sched-time small { display: block; font-size: 11px; color: var(--muted); font-weight: 500; }
+.ev-time-note { margin: -6px 0 12px; }
 .yen-preview { display: block; font-size: 12px; color: var(--accent); font-weight: 600; margin-top: 4px; min-height: 0; }
 .yen-preview.bad { color: var(--danger); }
 .btn-inline { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
@@ -435,7 +437,7 @@ details.posting:not([open]) { padding-bottom: 2px; }
 /* ============ compare ============ */
 .chart-panel h2 { margin-bottom: 2px; }
 .bar-chart { display: grid; gap: 8px; margin: 12px 0 6px; }
-.bar-row { display: grid; grid-template-columns: minmax(0, 40%) 1fr; gap: 8px; align-items: center; cursor: pointer; }
+.bar-row { display: grid; grid-template-columns: minmax(0, 48%) 1fr; gap: 8px; align-items: center; cursor: pointer; }
 .bar-label { font-size: 13px; display: flex; gap: 4px; align-items: center; min-width: 0; }
 .bar-label .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 1.25; }
 .bar-label .nm small, .cmp-table td small { display: block; font-size: 11px; color: var(--muted); }
@@ -546,3 +548,10 @@ label.plain select { margin-top: 4px; }
   /* 比較・予定 */
   .bar-row { grid-template-columns: minmax(0, 260px) 1fr; }
 }
+
+/* ---- v2.5 UI調整 ---- */
+.card-facts { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12.5px; color: var(--muted); margin: 0; }
+.card-facts b { color: var(--text); font-weight: 700; font-variant-numeric: tabular-nums; }
+.check-inline.nowrap { white-space: nowrap; font-size: 13px; }
+.ev-row.next .ev-title::after { content: '次の予定'; margin-left: 8px; font-size: 10.5px; font-weight: 700; color: var(--warn); background: var(--warn-soft); border-radius: 999px; padding: 2px 7px; vertical-align: 2px; }
+@media (max-width: 600px) { .bar-label .badge { font-size: 10px; padding: 1px 4px; } }

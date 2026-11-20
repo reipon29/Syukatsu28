@@ -96,9 +96,9 @@
     <!-- 予定 -->
     <section id="view-schedule" class="view">
       <div class="row-between">
-        <label class="check-inline"><input id="show-done" type="checkbox"> 完了・過去も表示</label>
+        <label class="check-inline nowrap"><input id="show-done" type="checkbox"> 完了・過去も表示</label>
         <div class="btn-inline">
-          <button id="ics-btn" class="btn small">カレンダーに書き出す</button>
+          <button id="ics-btn" class="btn small" title="iPhone・Googleなどのカレンダーに取り込めるファイルを書き出します">書き出し</button>
           <button id="add-event-btn" class="btn small primary">＋ 予定を追加</button>
         </div>
       </div>
@@ -426,10 +426,12 @@
             <option value="一次面接"><option value="二次面接"><option value="最終面接"><option value="インターン"><option value="内定承諾期限">
           </datalist>
         </label>
+        <label>日付 <span class="req">*</span><input name="date" type="date" required></label>
         <div class="grid2">
-          <label>日付 <span class="req">*</span><input name="date" type="date" required></label>
-          <label>時刻<input name="time" type="time"></label>
+          <label>開始時刻<input name="time" type="time"></label>
+          <label>終了時刻<input name="endTime" type="time"></label>
         </div>
+        <p class="note small ev-time-note">時刻を空欄にすると終日の予定になります。</p>
         <label>場所・URL<input name="place" autocomplete="off"></label>
         <label class="check-inline"><input name="done" type="checkbox"> 完了</label>
         <div class="btn-row">
