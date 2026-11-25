@@ -703,3 +703,20 @@ dialog > *, dialog form > * { min-width: 0; max-width: 100%; }
 .or-line { display: flex; align-items: center; gap: 10px; color: var(--faint, var(--muted)); font-size: 12px; margin: 14px 0 4px; }
 .or-line::before, .or-line::after { content: ''; flex: 1; border-top: 1px solid var(--border); }
 .bulk-banner { background: linear-gradient(135deg, #0f766e, var(--accent)); }
+
+/* ============ UI の調整（v2.12） ============ */
+.card-last { margin-top: 8px; font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.posting-cta { display: grid; gap: 4px; }
+.posting-cta .btn { margin-top: 4px; }
+.gm-timeline li { font-size: 14px; }
+.today-item .ti-actions .btn.small { padding: 5px 10px; font-size: 12px; border-radius: 8px; }
+.today-item { padding: 9px 0; }
+.today-item .mi-sub { font-size: 12px; }
+.today-more { display: block; margin: 8px auto 0; }
+@media (max-width: 420px) {
+  .today-item .ti-actions { padding-left: 36px; margin-top: 2px; }
+}
+@media (max-width: 700px) {
+  #add-event-btn { display: none; } /* スマホは右下の＋ボタンで追加 */
+}
+#view-schedule .row-between { align-items: center; }

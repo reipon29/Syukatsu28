@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '2.11.0';
+const APP_VERSION = '2.12.0';
 const STORAGE_KEY = 'syukatsu.v1';
 
 const STATUSES = [
@@ -532,6 +532,9 @@ function renderCompanies() {
       const n = daysFromToday(ne.date);
       const cls = n === 0 ? 'today' : n <= 3 ? 'soon' : '';
       nextHtml = `<div class="card-next ${cls}">${esc(ne.title)}・${fmtDate(ne.date)}${ne.time ? ' ' + timeRange(ne) : ''}（${relLabel(ne.date)}）</div>`;
+    } else {
+      const last = splitMemo(c.memo).gmLines.slice(-1)[0];
+      if (last) nextHtml = `<div class="card-last">📬 ${esc(last.slice(1).trim())}</div>`;
     }
     const rn = routeName(c);
     const keyP = c.postings.find(p => p.applied && postingHasData(p)) || c.postings.find(p => p.salary != null) || c.postings.find(postingHasData);
@@ -1827,6 +1830,7 @@ function loginActions(c) {
   const items = [];
   if (safeUrl(c.url)) items.push(`<a class="primary" href="${esc(c.url)}" target="_blank" rel="noopener">マイページを開く ↗</a>`);
   if (c.loginId) items.push(`<button data-act="copy-cid">IDコピー</button>`);
+  if (safeUrl(c.site)) items.push(`<a href="${esc(c.site)}" target="_blank" rel="noopener">採用サイト ↗</a>`);
   if (pwText(c.pwd)) items.push(`<button data-act="copy-cpw">PWコピー</button>`);
   if (acc) {
     if (safeUrl(acc.url)) items.push(`<a href="${esc(acc.url)}" target="_blank" rel="noopener" title="${esc(acc.name)}">${esc(accShort(acc))} ↗</a>`);
@@ -1900,16 +1904,16 @@ function renderDetail() {
     <section class="dsec">
       <div class="dsec-head"><h3>職種・条件</h3>${ps.length > 1 ? `<span class="note small">${ps.length}職種</span>` : ''}</div>
       ${ps.length ? ps.map((p, i) => postingCard(c, p, i, ps.length > 1)).join('')
-        : '<p class="muted-empty">まだ入力されていません。「編集」から募集要項を貼り付けると自動で入力されます。</p>'}
+        : emptyPostingCta(c)}
     </section>
 
-    <section class="dsec">
+    ${c.hq || c.locations ? `<section class="dsec">
       <div class="dsec-head"><h3>勤務地</h3>${tk ? `<span class="note small">${tk.label}</span>` : ''}</div>
-      ${c.hq || c.locations ? `<dl class="dl">
+      <dl class="dl">
         ${c.hq ? `<dt>本社</dt><dd>${esc(c.hq)}</dd>` : ''}
         ${c.locations ? `<dt>勤務地</dt><dd>${esc(c.locations)}</dd>` : ''}
-      </dl>` : '<p class="muted-empty">未入力</p>'}
-    </section>
+      </dl>
+    </section>` : ''}
 
     <section class="dsec">
       <div class="dsec-head"><h3>ES・面接メモ</h3><button class="btn small" data-act="add-note">＋ 追加</button></div>
@@ -1920,7 +1924,7 @@ function renderDetail() {
         </div>`).join('') : '<p class="muted-empty">提出したESの内容や、面接で聞かれた質問と答えを残しておくと、次の選考や他社の対策に使えます。</p>'}
     </section>
 
-    ${c.memo ? `<section class="dsec"><div class="dsec-head"><h3>メモ</h3></div><div class="memo-text">${esc(c.memo)}</div></section>` : ''}
+    ${memoSections(c)}
 
     <section class="dsec">
       <div class="dsec-head"><h3>選考履歴</h3></div>
@@ -1958,6 +1962,7 @@ $('#detail-body').addEventListener('click', e => {
     case 'add-note': openNote(c.id, null); break;
     case 'edit-note': openNote(c.id, t.dataset.nid); break;
     case 'copy-cid': copyText(c.loginId, 'ID'); break;
+    case 'find-posting': startFindPosting(c); break;
     case 'copy-cpw': copyPassword(c.pwd); break;
     case 'copy-aid': copyText(acc?.loginId, 'ID'); break;
     case 'copy-apw': copyPassword(acc?.pwd); break;
@@ -2128,6 +2133,7 @@ function renderHome() {
 }
 $('#view-home').addEventListener('click', e => {
   if (e.target.closest('[data-start-triage]')) { openTriage(); return; }
+  if (e.target.closest('[data-today-all]')) { $('#home-today').dataset.all = '1'; renderToday(); return; }
   const rd = e.target.closest('[data-reply-done]');
   if (rd) { markReplyDone(rd.dataset.replyDone); return; }
   if (e.target.closest('a[href]')) return;
@@ -2575,6 +2581,37 @@ async function importPostingFromUrl(action) {
 $('#posting-find').addEventListener('click', () => importPostingFromUrl('find'));
 $('#posting-fetch').addEventListener('click', () => importPostingFromUrl('fetch'));
 
+/** 詳細画面：募集要項が空のときの案内 */
+function emptyPostingCta(c) {
+  if (!gsyncConf().url) return '<p class="muted-empty">まだ入力されていません。「編集」から募集要項を貼り付けると自動で入力されます。</p>';
+  return `<div class="posting-cta">
+    <p class="note">${c.site ? '採用サイトから募集要項を探して、初任給・勤務地・休日などを自動で入力できます。' : '採用サイトの URL を入れると、募集要項を探して自動で入力できます。'}</p>
+    <button class="btn primary full-w" data-act="find-posting">🔎 ${c.site ? '採用サイトから募集要項を探す' : 'URL を入れて募集要項を探す'}</button>
+  </div>`;
+}
+function startFindPosting(c) {
+  dDialog.close();
+  openCompany(c.id);
+  const box = $('.paste-box');
+  box.scrollIntoView({ block: 'start' });
+  if (c.site) importPostingFromUrl('find');
+  else setTimeout(() => $('#posting-url').focus(), 100);
+}
+/** 詳細画面：自分のメモと、Gmail からわかった経緯を分けて表示 */
+function memoSections(c) {
+  const { own, gmSummary, gmLines } = splitMemo(c.memo);
+  let html = own ? `<section class="dsec"><div class="dsec-head"><h3>メモ</h3></div><div class="memo-text">${esc(own)}</div></section>` : '';
+  if (gmLines.length || gmSummary) {
+    html += `<section class="dsec"><div class="dsec-head"><h3>📬 Gmail からわかったこと</h3>${gmSummary ? `<span class="note small">${esc(gmSummary)}</span>` : ''}</div>
+      ${gmLines.length ? `<ul class="timeline gm-timeline">${[...gmLines].reverse().map(l => {
+        const m = l.slice(1).trim().match(/^(\d{2}\/\d{2})\s+(.*)$/);
+        return `<li><span class="tl-date">${esc(m ? m[1] : '')}</span>${esc(m ? m[2] : l.slice(1))}</li>`;
+      }).join('')}</ul>` : '<p class="muted-empty">案内メールが届いているだけで、自分から動いた記録はまだありません。</p>'}
+    </section>`;
+  }
+  return html;
+}
+
 /* ---------- ★3の企業の募集要項をまとめて取得 → 1社ずつ確認して保存 ---------- */
 let reviewQueue = []; // [{ id, data }]
 const bulkTargets = () => state.companies.filter(c => c.priority === 3 && ACTIVE_STATUSES.has(c.status) && !hasPosting(c));
@@ -2649,9 +2686,10 @@ function todayItems() {
     if (!ev.done && (d === 0 || d === 1)) items.push({ kind: 'prep', c, ev, d });
   }));
   // 3. 選考中なのに次の予定がない（10日以上動きがなければ結果待ち）
+  const WAITING = new Set(['es', 'test', 'gd', 'int1', 'int2', 'intf']);
   cs.filter(c => IN_PROCESS.has(c.status) && !nextEvent(c)).forEach(c => {
     const days = Math.floor((Date.now() - lastActivity(c)) / DAY_MS);
-    items.push({ kind: days >= 10 ? 'wait' : 'noevent', c, days });
+    items.push({ kind: WAITING.has(c.status) && days >= 10 ? 'wait' : 'noevent', c, days });
   });
   const order = { reply: 0, prep: 1, wait: 2, noevent: 3 };
   return items.sort((a, b) => order[a.kind] - order[b.kind] || (b.days || 0) - (a.days || 0));
@@ -2666,19 +2704,22 @@ function renderToday() {
       <div class="mi-main"><div class="mi-title">${title}</div><div class="mi-sub">${sub}</div></div>
       <div class="ti-actions">${actions}</div>
     </div>`;
-  $('#home-today').innerHTML = items.length ? `<div class="mini-list">${items.map(it => {
+  const LIMIT = 5;
+  const showAll = $('#home-today').dataset.all === '1';
+  const more = items.length > LIMIT && !showAll ? `<button class="link small today-more" data-today-all>残り ${items.length - LIMIT}件 を表示</button>` : '';
+  $('#home-today').innerHTML = items.length ? `<div class="mini-list">${(showAll ? items : items.slice(0, LIMIT)).map(it => {
     const c = it.c;
     if (it.kind === 'reply') return row('📩', `返信が必要：${esc(it.r.subject)}`, `${esc(c.name)}・${fmtDay(it.r.at)} に届いたメール`,
       ext(it.r.url, 'Gmailで開く') + `<button class="btn small" data-reply-done="${esc(it.r.thread)}">済</button>`);
     if (it.kind === 'prep') return row('🎯', `${it.d === 0 ? '今日' : '明日'}：${esc(it.ev.title)}`,
       `${esc(c.name)}${it.ev.time ? '・' + timeRange(it.ev) : ''}${it.ev.place ? '・' + esc(it.ev.place) : ''}`,
       '<span class="btn small ghost">準備する</span>', c.id);
-    if (it.kind === 'wait') return row('⏳', `${esc(c.name)}：${it.days}日 動きなし`,
+    if (it.kind === 'wait') return row('⏳', `${esc(c.name)}：${it.days > 60 ? '2か月以上' : it.days + '日'} 動きなし`,
       `${STATUS_MAP[c.status].label}のあと連絡がありません。マイページで結果を確認しましょう`,
       ext(c.url, 'マイページ') + `<button class="btn small" data-add-event="${c.id}">＋予定</button>`, c.id);
     return row('📅', `${esc(c.name)}：次の予定が未登録`, `${STATUS_MAP[c.status].label}・忘れている締切がないか確認`,
       `<button class="btn small" data-add-event="${c.id}">＋予定</button>`, c.id);
-  }).join('')}</div>` : '<p class="muted-empty">今日やることはありません 🎉</p>';
+  }).join('')}</div>${more}` : '<p class="muted-empty">今日やることはありません 🎉</p>';
 }
 function markReplyDone(thread) {
   const done = loadJSON(GSYNC_DONE_KEY, []);
@@ -2695,7 +2736,7 @@ function renderTriageBanner() {
   const el = $('#home-triage');
   el.hidden = !n;
   el.innerHTML = n ? `
-    <div class="tb-text"><b>まだ仕分けていない企業が ${n}社</b><span>1社5秒。スワイプで「受けたい・保留・受けない」に分けると、志望度がはっきりします</span></div>
+    <div class="tb-text"><b>未仕分けの企業が ${n}社</b><span>スワイプで「受けたい・保留・受けない」に（1社5秒）</span></div>
     <button class="btn primary" data-start-triage>仕分ける</button>` : '';
 }
 const tDialog = $('#triage-dialog');
