@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '2.9.0';
+const APP_VERSION = '2.10.0';
 const STORAGE_KEY = 'syukatsu.v1';
 
 const STATUSES = [
@@ -127,6 +127,7 @@ function normalizeCompany(c) {
       .map(normalizeEvent),
     createdAt: Number(c.createdAt) || Date.now(),
     updatedAt: Number(c.updatedAt) || Date.now(),
+    triagedAt: Number(c.triagedAt) || 0, // 志望度の仕分けをした日時（0 = まだ）
   };
 }
 function normalizeNote(n) {
@@ -401,7 +402,8 @@ $('#back-btn').addEventListener('click', () => showView(SUB_VIEWS[currentView] |
 document.addEventListener('click', e => {
   const g = e.target.closest('[data-goto]');
   if (g) { showView(g.dataset.goto); return; }
-  if (e.target.closest('[data-add-company]')) openCompany(null);
+  if (e.target.closest('[data-add-company]')) openQuickAdd();
+  if (e.target.closest('[data-open-triage]')) openTriage();
 });
 
 /* ---------- filters ---------- */
@@ -1605,7 +1607,7 @@ $('#delete-account').addEventListener('click', () => {
 $('#fab').addEventListener('click', () => {
   if (currentView === 'es') openStock(null);
   else if (currentView === 'schedule') openEvent(null, null);
-  else openCompany(null);
+  else openQuickAdd();
 });
 $('#add-event-btn').addEventListener('click', () => openEvent(null, null));
 
@@ -2063,7 +2065,7 @@ function renderHome() {
   const cs = state.companies;
   const empty = cs.length === 0;
   $('#home-empty').hidden = !empty;
-  $$('#view-home > .panel, #home-stats, #home-interest').forEach(el => { el.hidden = empty; });
+  $$('#view-home > .panel, #home-stats, #home-triage').forEach(el => { el.hidden = empty; });
   if (empty) return;
 
   const today = todayStr();
@@ -2097,20 +2099,8 @@ function renderHome() {
       <input type="checkbox" data-cid="${c.id}" data-eid="${ev.id}" aria-label="完了">
     </div>`).join('')}</div>` : '<p class="muted-empty">今後の予定はありません。右上の「＋ 追加」から登録できます。</p>';
 
-  const interest = cs.filter(c => c.status === 'interest');
-  $('#home-interest').hidden = !interest.length;
-  $('#home-interest').innerHTML = interest.length ? `
-    <div class="ib-text"><b>「興味あり」のままの企業が ${interest.length}社 あります</b>
-      <span>エントリー済みなら「エントリー済」にすると、選考中の数や予定の確認に反映されます。</span></div>
-    <button class="btn small primary" data-bulk-entry>まとめてエントリー済にする</button>` : '';
-
-  const todo = cs.filter(c => IN_PROCESS.has(c.status) && !nextEvent(c));
-  $('#home-todo-panel').hidden = !todo.length;
-  $('#home-todo').innerHTML = `<div class="mini-list">${todo.map(c => `
-    <div class="mini-item" data-open="${c.id}">
-      <div class="mi-main"><div class="mi-title">${esc(c.name)}</div><div class="mi-sub">${STATUS_MAP[c.status].label}</div></div>
-      <button class="btn small" data-add-event="${c.id}">＋ 予定</button>
-    </div>`).join('')}</div>`;
+  renderTriageBanner();
+  renderToday();
 
   const counts = STATUSES.map(s => ({ s, n: count(c => c.status === s.id) })).filter(x => x.n);
   const max = Math.max(...counts.map(x => x.n), 1);
@@ -2122,16 +2112,10 @@ function renderHome() {
     </div>`).join('');
 }
 $('#view-home').addEventListener('click', e => {
-  if (e.target.closest('[data-bulk-entry]')) {
-    const list = state.companies.filter(c => c.status === 'interest');
-    if (!list.length || !confirm(`「興味あり」の ${list.length}社 をすべて「エントリー済」にしますか？`)) return;
-    const now = Date.now();
-    list.forEach(c => { c.status = 'entry'; c.history.push({ status: 'entry', at: now }); c.updatedAt = now; });
-    save();
-    render();
-    toast(`${list.length}社 を「エントリー済」にしました`);
-    return;
-  }
+  if (e.target.closest('[data-start-triage]')) { openTriage(); return; }
+  const rd = e.target.closest('[data-reply-done]');
+  if (rd) { markReplyDone(rd.dataset.replyDone); return; }
+  if (e.target.closest('a[href]')) return;
   const add = e.target.closest('[data-add-event]');
   if (add) { openEvent(add.dataset.addEvent, null); return; }
   const edit = e.target.closest('[data-edit-eid]');
@@ -2360,6 +2344,8 @@ renderClipper();
 const GSYNC_KEY = 'syukatsu.gsync';      // { url, at }
 const GSYNC_IGNORE_KEY = 'syukatsu.gsyncIgnore'; // 削除した企業（nameKey）
 const GSYNC_MEMO = '【Gmail同期】';
+const GSYNC_REPLY_KEY = 'syukatsu.gsyncReplies'; // { nameKey: [{ thread, at, subject, url }] }
+const GSYNC_DONE_KEY = 'syukatsu.gsyncReplyDone'; // 「済」にしたスレッド
 const GSYNC_AUTO_MS = 3 * 3600e3;
 const gsyncConf = () => { try { return JSON.parse(localStorage.getItem(GSYNC_KEY) || '{}'); } catch { return {}; } };
 const gsyncSetConf = o => { try { localStorage.setItem(GSYNC_KEY, JSON.stringify({ ...gsyncConf(), ...o })); } catch { /* ignore */ } };
@@ -2420,6 +2406,12 @@ function applyGmailSync(data) {
     }
     if (JSON.stringify(cur) !== before) { cur.updatedAt = now; report.updated.push(cur.name); }
   }
+  // 返信が必要なメール（「今日やること」に出す）
+  const replies = {};
+  for (const inc of Array.isArray(data.companies) ? data.companies : []) {
+    if (inc && inc.name && Array.isArray(inc.replies) && inc.replies.length) replies[nameKey(inc.name)] = inc.replies;
+  }
+  try { localStorage.setItem(GSYNC_REPLY_KEY, JSON.stringify(replies)); } catch { /* ignore */ }
   return report;
 }
 let gsyncBusy = false;
@@ -2484,6 +2476,321 @@ function gsyncAuto() {
 }
 setTimeout(gsyncAuto, 1500);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) gsyncAuto(); });
+
+/* ---------- 今日やること ---------- */
+const loadJSON = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
+const DAY_MS = 864e5;
+/** 最後に動きがあった日時（登録・ステータス変更・過ぎた予定） */
+function lastActivity(c) {
+  const today = todayStr();
+  return Math.max(c.createdAt, ...c.history.map(h => h.at),
+    ...c.events.filter(ev => ev.date <= today).map(ev => new Date(`${ev.date}T${ev.time || '12:00'}`).getTime()));
+}
+function todayItems() {
+  const cs = state.companies;
+  const items = [];
+  // 1. 返信が必要なメール
+  const done = new Set(loadJSON(GSYNC_DONE_KEY, []));
+  for (const [key, list] of Object.entries(loadJSON(GSYNC_REPLY_KEY, {}))) {
+    const c = cs.find(x => nameKey(x.name) === key);
+    if (!c || !ACTIVE_STATUSES.has(c.status)) continue;
+    for (const r of list) if (!done.has(r.thread) && Date.now() - r.at < 30 * DAY_MS) items.push({ kind: 'reply', c, r });
+  }
+  // 2. 今日・明日の予定の準備
+  cs.forEach(c => c.events.forEach(ev => {
+    const d = daysFromToday(ev.date);
+    if (!ev.done && (d === 0 || d === 1)) items.push({ kind: 'prep', c, ev, d });
+  }));
+  // 3. 選考中なのに次の予定がない（10日以上動きがなければ結果待ち）
+  cs.filter(c => IN_PROCESS.has(c.status) && !nextEvent(c)).forEach(c => {
+    const days = Math.floor((Date.now() - lastActivity(c)) / DAY_MS);
+    items.push({ kind: days >= 10 ? 'wait' : 'noevent', c, days });
+  });
+  const order = { reply: 0, prep: 1, wait: 2, noevent: 3 };
+  return items.sort((a, b) => order[a.kind] - order[b.kind] || (b.days || 0) - (a.days || 0));
+}
+function renderToday() {
+  const items = todayItems();
+  $('#home-today-count').textContent = items.length ? `${items.length}件` : '';
+  const ext = (href, label) => href ? `<a class="btn small" href="${esc(href)}" target="_blank" rel="noopener">${label}</a>` : '';
+  const row = (ico, title, sub, actions, open) => `
+    <div class="mini-item today-item"${open ? ` data-open="${open}"` : ''}>
+      <span class="ti-ico" aria-hidden="true">${ico}</span>
+      <div class="mi-main"><div class="mi-title">${title}</div><div class="mi-sub">${sub}</div></div>
+      <div class="ti-actions">${actions}</div>
+    </div>`;
+  $('#home-today').innerHTML = items.length ? `<div class="mini-list">${items.map(it => {
+    const c = it.c;
+    if (it.kind === 'reply') return row('📩', `返信が必要：${esc(it.r.subject)}`, `${esc(c.name)}・${fmtDay(it.r.at)} に届いたメール`,
+      ext(it.r.url, 'Gmailで開く') + `<button class="btn small" data-reply-done="${esc(it.r.thread)}">済</button>`);
+    if (it.kind === 'prep') return row('🎯', `${it.d === 0 ? '今日' : '明日'}：${esc(it.ev.title)}`,
+      `${esc(c.name)}${it.ev.time ? '・' + timeRange(it.ev) : ''}${it.ev.place ? '・' + esc(it.ev.place) : ''}`,
+      '<span class="btn small ghost">準備する</span>', c.id);
+    if (it.kind === 'wait') return row('⏳', `${esc(c.name)}：${it.days}日 動きなし`,
+      `${STATUS_MAP[c.status].label}のあと連絡がありません。マイページで結果を確認しましょう`,
+      ext(c.url, 'マイページ') + `<button class="btn small" data-add-event="${c.id}">＋予定</button>`, c.id);
+    return row('📅', `${esc(c.name)}：次の予定が未登録`, `${STATUS_MAP[c.status].label}・忘れている締切がないか確認`,
+      `<button class="btn small" data-add-event="${c.id}">＋予定</button>`, c.id);
+  }).join('')}</div>` : '<p class="muted-empty">今日やることはありません 🎉</p>';
+}
+function markReplyDone(thread) {
+  const done = loadJSON(GSYNC_DONE_KEY, []);
+  done.push(thread);
+  try { localStorage.setItem(GSYNC_DONE_KEY, JSON.stringify(done.slice(-300))); } catch { /* ignore */ }
+  toast('返信済みにしました');
+  render();
+}
+
+/* ---------- 志望度の仕分け（スワイプ） ---------- */
+const untriaged = () => state.companies.filter(c => c.status === 'interest' && !c.triagedAt);
+function renderTriageBanner() {
+  const n = untriaged().length;
+  const el = $('#home-triage');
+  el.hidden = !n;
+  el.innerHTML = n ? `
+    <div class="tb-text"><b>まだ仕分けていない企業が ${n}社</b><span>1社5秒。スワイプで「受けたい・保留・受けない」に分けると、志望度がはっきりします</span></div>
+    <button class="btn primary" data-start-triage>仕分ける</button>` : '';
+}
+const tDialog = $('#triage-dialog');
+let triageQueue = [];
+let triageIdx = 0;
+let triageHist = [];
+function openTriage() {
+  let list = untriaged();
+  let again = false;
+  if (!list.length) { list = state.companies.filter(c => c.status === 'interest' && c.priority === 2); again = true; }
+  if (!list.length) { toast('仕分ける企業はありません'); return; }
+  // 自分が動いた企業・メールが多い企業から
+  const score = c => c.priority * 100 + (c.memo.match(/に (\d+)通/) || [0, 0])[1] * 1;
+  triageQueue = list.sort((a, b) => score(b) - score(a)).map(c => c.id);
+  triageIdx = 0;
+  triageHist = [];
+  if (again) toast('「保留」にした企業をもう一度仕分けます');
+  renderTriage();
+  tDialog.showModal();
+}
+function splitMemo(memo) {
+  const i = memo.indexOf(GSYNC_MEMO);
+  const own = (i >= 0 ? memo.slice(0, i) : memo).trim();
+  const gm = i >= 0 ? memo.slice(i + GSYNC_MEMO.length).trim().split('\n').filter(Boolean) : [];
+  return { own, gmSummary: gm[0] && !gm[0].startsWith('・') ? gm[0] : '', gmLines: gm.filter(l => l.startsWith('・')) };
+}
+function triageCard(c, behind) {
+  const { own, gmSummary, gmLines } = splitMemo(c.memo);
+  const ev = nextEvent(c);
+  return `<div class="tcard${behind ? ' behind' : ''}"${behind ? '' : ' id="tcard"'}>
+    ${behind ? '' : '<div class="tc-stamp yes">受けたい</div><div class="tc-stamp no">受けない</div><div class="tc-stamp maybe">保留</div>'}
+    <div class="tc-name">${esc(c.name)}</div>
+    <div class="tc-badges">${c.industry ? `<span class="chip g-pre">${esc(c.industry)}</span>` : ''}${tokyoBadge(c)}<span class="stars-view">${stars(c.priority)}</span></div>
+    ${gmLines.length ? `<div class="tc-sec"><div class="tc-h">自分がしたこと・届いた連絡</div><ul>${gmLines.slice(-4).map(l => `<li>${esc(l.slice(1))}</li>`).join('')}</ul></div>` : ''}
+    ${gmSummary ? `<div class="tc-meta">📬 ${esc(gmSummary)}</div>` : ''}
+    ${ev ? `<div class="tc-meta">📅 ${fmtDate(ev.date)} ${esc(ev.title)}</div>` : ''}
+    ${own ? `<div class="tc-memo">${esc(own.slice(0, 140))}</div>` : ''}
+    ${!gmLines.length && !gmSummary && !own ? '<div class="tc-meta">メモはまだありません</div>' : ''}
+  </div>`;
+}
+function renderTriage() {
+  const total = triageQueue.length;
+  $('#triage-progress').textContent = `${Math.min(triageIdx + 1, total)} / ${total}`;
+  $('#triage-undo').disabled = !triageHist.length;
+  const stage = $('#triage-stage');
+  const btns = $('.triage-buttons');
+  if (triageIdx >= total) {
+    const cnt = k => triageHist.filter(h => h.kind === k).length;
+    btns.hidden = true;
+    stage.innerHTML = `<div class="tcard done-card"><div class="tc-name">おつかれさまでした！</div>
+      <p>受けたい <b>${cnt('yes')}</b>社・保留 <b>${cnt('maybe')}</b>社・受けない <b>${cnt('no')}</b>社</p>
+      <p class="note">「受けたい」は ★★★、「受けない」は「辞退」になりました（企業一覧の「すべて」で確認・変更できます）。</p>
+      <button type="button" class="btn primary" data-close-triage>閉じる</button></div>`;
+    return;
+  }
+  btns.hidden = false;
+  const c = findCompany(triageQueue[triageIdx]);
+  const next = findCompany(triageQueue[triageIdx + 1]);
+  stage.innerHTML = (next ? triageCard(next, true) : '') + triageCard(c, false);
+  bindSwipe($('#tcard'));
+}
+function decideTriage(kind) {
+  const c = findCompany(triageQueue[triageIdx]);
+  if (!c) return;
+  triageHist.push({ kind, id: c.id, prev: { status: c.status, priority: c.priority, triagedAt: c.triagedAt, historyLen: c.history.length } });
+  const now = Date.now();
+  c.triagedAt = now;
+  c.updatedAt = now;
+  if (kind === 'yes') c.priority = 3;
+  if (kind === 'maybe') c.priority = 2;
+  if (kind === 'no') { c.priority = 1; c.status = 'declined'; c.history.push({ status: 'declined', at: now }); }
+  save();
+  triageIdx++;
+  renderTriage();
+}
+function undoTriage() {
+  const h = triageHist.pop();
+  if (!h) return;
+  const c = findCompany(h.id);
+  if (c) {
+    Object.assign(c, { status: h.prev.status, priority: h.prev.priority, triagedAt: h.prev.triagedAt });
+    c.history = c.history.slice(0, h.prev.historyLen);
+    save();
+  }
+  triageIdx = Math.max(0, triageIdx - 1);
+  renderTriage();
+}
+/** カードを指でスワイプ（右=受けたい / 左=受けない / 上=保留） */
+function bindSwipe(card) {
+  if (!card) return;
+  let sx = 0, sy = 0, dx = 0, dy = 0, dragging = false;
+  const stamps = { yes: card.querySelector('.tc-stamp.yes'), no: card.querySelector('.tc-stamp.no'), maybe: card.querySelector('.tc-stamp.maybe') };
+  const kindOf = () => (dy < -90 && Math.abs(dy) > Math.abs(dx) ? 'maybe' : dx > 90 ? 'yes' : dx < -90 ? 'no' : null);
+  const paint = () => {
+    card.style.transform = `translate(${dx}px, ${dy}px) rotate(${dx / 18}deg)`;
+    stamps.yes.style.opacity = Math.max(0, Math.min(1, dx / 90));
+    stamps.no.style.opacity = Math.max(0, Math.min(1, -dx / 90));
+    stamps.maybe.style.opacity = Math.abs(dy) > Math.abs(dx) ? Math.max(0, Math.min(1, -dy / 90)) : 0;
+  };
+  card.addEventListener('pointerdown', e => {
+    dragging = true; sx = e.clientX; sy = e.clientY; dx = dy = 0;
+    card.setPointerCapture(e.pointerId);
+    card.classList.add('dragging');
+  });
+  card.addEventListener('pointermove', e => {
+    if (!dragging) return;
+    dx = e.clientX - sx; dy = e.clientY - sy;
+    paint();
+  });
+  const end = () => {
+    if (!dragging) return;
+    dragging = false;
+    card.classList.remove('dragging');
+    const kind = kindOf();
+    if (kind) flyOut(kind); else { dx = dy = 0; paint(); }
+  };
+  card.addEventListener('pointerup', end);
+  card.addEventListener('pointercancel', end);
+}
+function flyOut(kind) {
+  const card = $('#tcard');
+  if (!card || card.classList.contains('out')) return;
+  const to = { yes: 'translate(140%, 0) rotate(18deg)', no: 'translate(-140%, 0) rotate(-18deg)', maybe: 'translate(0, -140%)' }[kind];
+  const stamp = card.querySelector(`.tc-stamp.${kind}`);
+  if (stamp) stamp.style.opacity = 1;
+  card.classList.add('out');
+  card.style.transform = to;
+  card.style.opacity = '0';
+  setTimeout(() => decideTriage(kind), 220);
+}
+$('.triage-buttons').addEventListener('click', e => { const b = e.target.closest('[data-t]'); if (b) flyOut(b.dataset.t); });
+$('#triage-undo').addEventListener('click', undoTriage);
+tDialog.addEventListener('click', e => {
+  if (e.target.closest('[data-close]') || e.target.closest('[data-close-triage]')) tDialog.close();
+});
+tDialog.addEventListener('keydown', e => {
+  const k = { ArrowRight: 'yes', ArrowLeft: 'no', ArrowUp: 'maybe' }[e.key];
+  if (k && triageIdx < triageQueue.length) { e.preventDefault(); flyOut(k); }
+  if ((e.metaKey || e.ctrlKey) && e.key === 'z') { e.preventDefault(); undoTriage(); }
+});
+tDialog.addEventListener('close', () => render());
+
+/* ---------- クイック追加 ---------- */
+const qDialog = $('#quick-dialog');
+const qOne = $('#quick-one');
+const qMany = $('#quick-many');
+let quickStatus = 'interest';
+let quickPriority = 2;
+function setPills(rowSel, v) { $$(`${rowSel} button`).forEach(b => b.classList.toggle('on', b.dataset.v === String(v))); }
+function setQuickMode(mode) {
+  $$('#quick-mode button').forEach(b => b.classList.toggle('on', b.dataset.mode === mode));
+  qOne.hidden = mode !== 'one';
+  qMany.hidden = mode !== 'many';
+  setTimeout(() => (mode === 'one' ? qOne.name : qMany.names).focus(), 50);
+}
+function openQuickAdd() {
+  qOne.reset();
+  qMany.reset();
+  quickStatus = 'interest';
+  quickPriority = 2;
+  setPills('#quick-status', quickStatus);
+  setPills('#quick-priority', quickPriority);
+  updateQuickHints();
+  updateManyPreview();
+  qDialog.showModal();
+  setQuickMode('one');
+}
+const findByName = name => state.companies.find(c => nameKey(c.name) === nameKey(name));
+function updateQuickHints() {
+  const name = qOne.name.value.trim();
+  const dup = name && findByName(name);
+  const box = $('#quick-dup');
+  box.hidden = !dup;
+  box.innerHTML = dup ? `「${esc(dup.name)}」はすでに登録されています（${STATUS_MAP[dup.status].label}）。 <button type="button" class="link" data-quick-open="${dup.id}">開く</button>` : '';
+  const g = name ? guessIndustries(name)[0] : null;
+  $('#quick-industry').textContent = g ? `業界：${g.name}（企業名から推定）` : '';
+}
+function quickCompany(name, status, priority, triaged) {
+  const now = Date.now();
+  const c = normalizeCompany({
+    name, status, priority, industry: guessIndustries(name)[0]?.name || '',
+    history: status !== 'interest' ? [{ status, at: now }] : [], createdAt: now, updatedAt: now, triagedAt: triaged ? now : 0,
+  });
+  state.companies.push(c);
+  return c;
+}
+$('#quick-mode').addEventListener('click', e => { const b = e.target.closest('[data-mode]'); if (b) setQuickMode(b.dataset.mode); });
+$('#quick-status').addEventListener('click', e => { const b = e.target.closest('[data-v]'); if (b) { quickStatus = b.dataset.v; setPills('#quick-status', quickStatus); } });
+$('#quick-priority').addEventListener('click', e => { const b = e.target.closest('[data-v]'); if (b) { quickPriority = Number(b.dataset.v); setPills('#quick-priority', quickPriority); } });
+qOne.name.addEventListener('input', updateQuickHints);
+qDialog.addEventListener('click', e => {
+  if (e.target.closest('[data-close]')) { qDialog.close(); return; }
+  const o = e.target.closest('[data-quick-open]');
+  if (o) { qDialog.close(); openDetail(o.dataset.quickOpen); }
+});
+qOne.addEventListener('submit', e => {
+  e.preventDefault();
+  const name = qOne.name.value.trim();
+  if (!name) return;
+  if (findByName(name) && !confirm(`「${name}」はすでに登録されています。もう1社追加しますか？`)) return;
+  const c = quickCompany(name, quickStatus, quickPriority, true);
+  save();
+  render();
+  toast(`「${c.name}」を追加しました${c.industry ? `（${c.industry}）` : ''}`);
+  qOne.name.value = '';
+  updateQuickHints();
+  qOne.name.focus();
+});
+$('#quick-detail').addEventListener('click', () => {
+  const name = qOne.name.value.trim();
+  qDialog.close();
+  openCompany(null);
+  cForm.name.value = name;
+  cForm.status.value = quickStatus;
+  setPriority(quickPriority);
+  updateIndustryUi();
+});
+function parseNameList(text) {
+  const seen = new Set();
+  return text.split(/[\n\t,、，]+/)
+    .map(l => l.replace(/^\s*(?:[-・*●■□◆◇○◎▼▶]|\d+[.)．）])\s*/, '').trim())
+    .filter(l => l && l.length <= 40)
+    .filter(l => { const k = nameKey(l); if (!k || seen.has(k)) return false; seen.add(k); return true; });
+}
+function updateManyPreview() {
+  const names = parseNameList(qMany.names.value);
+  const fresh = names.filter(n => !findByName(n));
+  $('#quick-many-preview').textContent = names.length
+    ? `${fresh.length}社を追加します${names.length > fresh.length ? `（${names.length - fresh.length}社は登録済みなのでスキップ）` : ''}。「興味あり」で登録され、あとでスワイプで仕分けできます。`
+    : 'メモ帳や Excel からコピーして貼り付けられます。「興味あり」で登録され、あとでスワイプで仕分けできます。';
+}
+qMany.names.addEventListener('input', updateManyPreview);
+qMany.addEventListener('submit', e => {
+  e.preventDefault();
+  const fresh = parseNameList(qMany.names.value).filter(n => !findByName(n));
+  if (!fresh.length) { toast('追加する企業がありません'); return; }
+  fresh.forEach(n => quickCompany(n, 'interest', 2, false));
+  save();
+  qDialog.close();
+  render();
+  toast(`${fresh.length}社を追加しました。ホームの「仕分ける」で志望度を分けられます`);
+});
 
 /* ---------- 表示テーマ ---------- */
 const darkMQ = matchMedia('(prefers-color-scheme: dark)');

@@ -47,15 +47,14 @@
     <!-- ホーム -->
     <section id="view-home" class="view active">
       <div id="home-stats" class="stat-grid"></div>
-      <div id="home-interest" class="info-banner" hidden></div>
+      <div id="home-triage" class="triage-banner" hidden></div>
+      <div class="panel" id="home-today-panel">
+        <div class="panel-head"><h2>今日やること</h2><span class="note small" id="home-today-count"></span></div>
+        <div id="home-today"></div>
+      </div>
       <div class="panel">
         <div class="panel-head"><h2>直近の予定・締切</h2><span><button class="link small" data-add-event="">＋ 追加</button><button class="link small" data-goto="schedule">すべて見る</button></span></div>
         <div id="home-events"></div>
-      </div>
-      <div class="panel" id="home-todo-panel">
-        <div class="panel-head"><h2>次の予定が未登録の企業</h2></div>
-        <p class="note">選考中なのに予定・締切が入っていない企業です。忘れている締切がないか確認しましょう。</p>
-        <div id="home-todo"></div>
       </div>
       <div class="panel">
         <div class="panel-head"><h2>選考状況</h2></div>
@@ -145,6 +144,7 @@
       <div class="menu-list">
         <button class="menu-item" data-goto="login"><span class="mi-ico">🔑</span><span class="mi-text"><b>ログイン情報</b><small>マイナビ・リクナビ・企業マイページのID</small></span><svg class="chev"><use href="#i-chev"/></svg></button>
         <button class="menu-item" data-goto="es"><span class="mi-ico">✍️</span><span class="mi-text"><b>ESストック</b><small>自己PR・ガクチカなどの文章を保存</small></span><svg class="chev"><use href="#i-chev"/></svg></button>
+        <button class="menu-item" data-open-triage><span class="mi-ico">🃏</span><span class="mi-text"><b>志望度の仕分け</b><small>「興味あり」の企業をスワイプで仕分ける</small></span><svg class="chev"><use href="#i-chev"/></svg></button>
         <button class="menu-item" data-open-guide><span class="mi-ico">🏭</span><span class="mi-text"><b>業界ガイド</b><small>業界の分類とどんな仕事か</small></span><svg class="chev"><use href="#i-chev"/></svg></button>
       </div>
       <div class="panel">
@@ -621,6 +621,71 @@
         <button type="button" class="btn" data-close>キャンセル</button>
       </div>
       <p class="note small">「追加・統合」はこの端末のデータを消さずに、ファイルにある企業・予定・メモを足します。同じ企業は更新日時が新しい方の内容を使い、予定・メモ・職種は両方を残します。<br>「すべて置き換え」はこの端末のデータを消してファイルの内容にします。</p>
+    </div>
+  </dialog>
+
+  <!-- クイック追加 -->
+  <dialog id="quick-dialog" class="sheet">
+    <div class="dialog-head">
+      <span></span>
+      <h2>企業を追加</h2>
+      <button type="button" class="link strong" data-close>閉じる</button>
+    </div>
+    <div class="dialog-body">
+      <div class="seg" id="quick-mode">
+        <button type="button" data-mode="one" class="on">1社ずつ</button>
+        <button type="button" data-mode="many">まとめて</button>
+      </div>
+      <form id="quick-one" autocomplete="off">
+        <label class="plain">企業名
+          <input name="name" required placeholder="例：ニフティ" enterkeyhint="done">
+        </label>
+        <div id="quick-dup" class="note small quick-dup" hidden></div>
+        <div class="quick-label">今どこまで進んでる？</div>
+        <div class="pill-row" id="quick-status">
+          <button type="button" data-v="interest" class="on">気になる</button>
+          <button type="button" data-v="entry">エントリーした</button>
+          <button type="button" data-v="es">ES・テスト中</button>
+          <button type="button" data-v="int1">面接中</button>
+        </div>
+        <div class="quick-label">志望度</div>
+        <div class="pill-row" id="quick-priority">
+          <button type="button" data-v="3">◎ 第一志望群</button>
+          <button type="button" data-v="2" class="on">○ ふつう</button>
+          <button type="button" data-v="1">△ とりあえず</button>
+        </div>
+        <p class="note small" id="quick-industry"></p>
+        <div class="btn-col quick-actions">
+          <button type="submit" class="btn primary">追加する</button>
+          <button type="button" class="btn" id="quick-detail">詳しく入力する（募集要項・ログインなど）</button>
+        </div>
+        <p class="note small">続けて別の企業を入力できます。採用ページの文章は「詳しく入力」から貼り付けると自動で読み取ります。</p>
+      </form>
+      <form id="quick-many" hidden>
+        <label class="plain">企業名を1行に1社ずつ
+          <textarea name="names" rows="8" placeholder="ニフティ&#10;ジャストシステム&#10;株式会社〇〇"></textarea>
+        </label>
+        <p class="note small" id="quick-many-preview">メモ帳や Excel からコピーして貼り付けられます。「興味あり」で登録され、あとで仕分けできます。</p>
+        <div class="btn-col quick-actions"><button type="submit" class="btn primary">まとめて追加する</button></div>
+      </form>
+    </div>
+  </dialog>
+
+  <!-- 志望度の仕分け -->
+  <dialog id="triage-dialog" class="sheet triage-dialog">
+    <div class="dialog-head">
+      <button type="button" class="link" id="triage-undo" disabled>↶ 戻す</button>
+      <h2>志望度の仕分け <small id="triage-progress"></small></h2>
+      <button type="button" class="link strong" data-close>終わる</button>
+    </div>
+    <div class="dialog-body triage-body">
+      <p class="note small triage-hint">右 → 受けたい　上 ↑ 保留　← 左 受けない</p>
+      <div class="triage-stage" id="triage-stage"></div>
+      <div class="triage-buttons">
+        <button type="button" class="tb no" data-t="no" aria-label="受けない">✕<small>受けない</small></button>
+        <button type="button" class="tb maybe" data-t="maybe" aria-label="保留">？<small>保留</small></button>
+        <button type="button" class="tb yes" data-t="yes" aria-label="受けたい">◎<small>受けたい</small></button>
+      </div>
     </div>
   </dialog>
 

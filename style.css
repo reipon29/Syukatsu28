@@ -619,3 +619,78 @@ dialog > *, dialog form > * { min-width: 0; max-width: 100%; }
 .gsync-help summary { cursor: pointer; font-size: 13px; font-weight: 600; color: var(--accent); }
 .gsync-help a { color: var(--accent); }
 #gsync-url { width: 100%; }
+
+/* ============ 志望度の仕分けの案内（ホーム） ============ */
+.triage-banner {
+  display: flex; align-items: center; gap: 12px; margin-bottom: 14px; padding: 14px 16px;
+  border-radius: var(--radius); background: linear-gradient(135deg, var(--accent), #7c3aed); color: #fff; box-shadow: var(--shadow);
+}
+.triage-banner .tb-text { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.triage-banner .tb-text b { font-size: 15px; }
+.triage-banner .tb-text span { font-size: 12px; opacity: .9; }
+.triage-banner .btn.primary { background: #fff; color: var(--accent); border-color: #fff; flex: none; }
+
+/* ============ 今日やること ============ */
+.today-item { align-items: flex-start; }
+.today-item .ti-ico { font-size: 20px; line-height: 1.3; flex: none; width: 26px; text-align: center; }
+.today-item .mi-title { white-space: normal; }
+.today-item .mi-sub { white-space: normal; }
+.today-item .ti-actions { display: flex; gap: 6px; flex: none; align-self: center; }
+.btn.ghost { background: var(--accent-soft); border-color: transparent; color: var(--accent); }
+@media (max-width: 420px) {
+  .today-item { flex-wrap: wrap; }
+  .today-item .ti-actions { width: 100%; padding-left: 36px; }
+}
+
+/* ============ クイック追加 ============ */
+.quick-label { font-size: 13px; font-weight: 700; color: var(--muted); margin: 14px 0 6px; }
+.pill-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.pill-row button {
+  border: 1px solid var(--border); background: var(--surface); color: var(--text); border-radius: 999px;
+  padding: 9px 14px; font-weight: 600; font-size: 14px; cursor: pointer;
+}
+.pill-row button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.quick-dup { background: var(--accent-soft); color: var(--text); padding: 8px 10px; border-radius: 10px; margin-top: 8px; }
+.quick-actions { margin-top: 16px; }
+#quick-one input[name=name] { font-size: 18px !important; padding: 12px 14px; }
+
+/* ============ スワイプ仕分け ============ */
+.triage-body { display: flex; flex-direction: column; gap: 12px; }
+.triage-hint { text-align: center; margin: 0; }
+.dialog-head h2 small { font-size: 12px; color: var(--muted); font-weight: 600; margin-left: 4px; }
+.triage-stage { position: relative; height: min(460px, 60dvh); flex: none; }
+.tcard {
+  position: absolute; inset: 0; background: var(--surface); border: 1px solid var(--border); border-radius: 20px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .12); padding: 22px 20px; overflow: hidden auto;
+  touch-action: none; user-select: none; -webkit-user-select: none; cursor: grab;
+  transition: transform .22s ease, opacity .22s ease; display: flex; flex-direction: column; gap: 12px;
+}
+.tcard.dragging { transition: none; cursor: grabbing; }
+.tcard.behind { transform: scale(.95) translateY(10px); opacity: .6; pointer-events: none; }
+.tcard.done-card { position: relative; inset: auto; text-align: center; align-items: center; justify-content: center; cursor: default; touch-action: auto; }
+.tc-name { font-size: 24px; font-weight: 800; line-height: 1.25; word-break: break-word; }
+.tc-badges { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.tc-sec { background: var(--surface-2); border-radius: 12px; padding: 10px 12px; }
+.tc-h { font-size: 12px; color: var(--muted); font-weight: 700; margin-bottom: 4px; }
+.tc-sec ul { margin: 0; padding-left: 18px; font-size: 14px; line-height: 1.6; }
+.tc-meta { font-size: 13px; color: var(--muted); }
+.tc-memo { font-size: 14px; white-space: pre-wrap; border-left: 3px solid var(--border); padding-left: 10px; }
+.tc-stamp {
+  position: absolute; top: 18px; padding: 4px 12px; border: 3px solid; border-radius: 10px; font-weight: 800; font-size: 20px;
+  opacity: 0; pointer-events: none; background: var(--surface);
+}
+.tc-stamp.yes { right: 18px; color: var(--green); transform: rotate(10deg); }
+.tc-stamp.no { left: 18px; color: var(--danger); transform: rotate(-10deg); }
+.tc-stamp.maybe { left: 50%; transform: translateX(-50%); color: var(--star); }
+.triage-buttons { display: flex; justify-content: center; gap: 22px; padding: 4px 0 8px; }
+.triage-buttons .tb {
+  width: 68px; height: 68px; border-radius: 50%; border: 2px solid var(--border); background: var(--surface);
+  font-size: 26px; font-weight: 800; cursor: pointer; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  box-shadow: var(--shadow); line-height: 1;
+}
+.triage-buttons .tb small { font-size: 10px; font-weight: 700; margin-top: 4px; color: var(--muted); }
+.triage-buttons .tb:active { transform: scale(.94); }
+.triage-buttons .tb.no { color: var(--danger); }
+.triage-buttons .tb.maybe { color: var(--star); width: 56px; height: 56px; align-self: center; }
+.triage-buttons .tb.yes { color: var(--green); }
+.triage-dialog .dialog-body { justify-content: center; }

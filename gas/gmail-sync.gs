@@ -103,7 +103,7 @@ function sync_(limitMs) {
       const b = Math.min(a + WINDOW_SEC, now);
       for (let start = 0; ; start += 100) {
         const threads = GmailApp.search(`${query} after:${a} before:${b}`, start, 100);
-        threads.forEach(t => processThread_(t.getMessages().map(wrapMessage_), ctx, a * 1000, b * 1000));
+        threads.forEach(t => processThread_(t.getMessages().map(wrapMessage_), ctx, a * 1000, b * 1000, t.getId()));
         if (threads.length < 100) break;
       }
       store.meta.cursor = b;
@@ -250,6 +250,14 @@ function classify_(subject, body) {
   }
   return res;
 }
+/** 返信を求めているメールか（送信専用アドレスやアンケート・宣伝は除く） */
+function needsReply_(subject, body) {
+  const s = norm_(subject);
+  const b = norm_(body).slice(0, 2500);
+  if (/アンケート|受付中|予約開始|募集|特典|セミナー|座談会/.test(s)) return false;
+  if (/送信専用|配信専用|返信(?:され|いただい)ても|返信できません|ご返信いただいてもお答え/.test(b)) return false;
+  return /要返信|ご返信(?:を)?(?:お願い|ください|いただけ)|返信(?:を)?(?:お願い|ください)|ご回答(?:を)?(?:お願い|ください)|候補日|ご都合の(?:良い|よい)|日程(?:の)?(?:再)?調整/.test(s + '\n' + b);
+}
 function shortSubject_(s) {
   return norm_(s).replace(/【[^】]*】|\[[^\]]*\]|＜[^＞]*＞|<[^>]*>|※[^※]*※/g, '').replace(/^(?:re|fw|fwd):\s*/i, '').trim().slice(0, 40) || norm_(s).slice(0, 40);
 }
@@ -290,7 +298,7 @@ function findLogin_(body) {
 
 /* ===================== 企業ごとにまとめる ===================== */
 
-function processThread_(msgs, ctx, fromMs, toMs) {
+function processThread_(msgs, ctx, fromMs, toMs, threadId) {
   const store = ctx.store;
   // スレッドの企業（自分以外が送ったメールから判定）
   let key = null;
@@ -305,6 +313,17 @@ function processThread_(msgs, ctx, fromMs, toMs) {
     if (m.at < fromMs || m.at >= toMs) continue; // 別の期間で読む
     ctx.read++;
     applyMessage_(c, m, ctx);
+  }
+  // 返信が必要なメールに、まだ自分が返信していないか（スレッド全体で判定）
+  if (threadId) {
+    c.replies = c.replies || {};
+    let ask = null;
+    for (const m of msgs) {
+      if (isMine_(m, ctx)) ask = null;
+      else if (needsReply_(m.subject, m.body())) ask = m;
+    }
+    if (ask) c.replies[threadId] = { at: ask.at, subject: shortSubject_(ask.subject) };
+    else delete c.replies[threadId];
   }
   store.dirty.add('c:' + key);
 }
@@ -377,6 +396,7 @@ function trimCompany_(c) {
   c.urls = top(c.urls, 3);
   c.notes = c.notes.sort((a, b) => a.at - b.at).slice(-10);
   c.events = c.events.sort((a, b) => (a.date < b.date ? -1 : 1)).slice(-10);
+  if (c.replies) c.replies = Object.fromEntries(Object.entries(c.replies).sort((a, b) => b[1].at - a[1].at).slice(0, 5));
   return c;
 }
 
@@ -397,6 +417,7 @@ function exportForApp_(store, r) {
       url: best(c.urls), loginId: best(c.ids), memo,
       events: c.events.map(e => ({ ...e, done: e.date < today })),
       mailCount: c.mailCount, lastAt: c.lastAt,
+      replies: Object.entries(c.replies || {}).map(([thread, r]) => ({ thread, at: r.at, subject: r.subject, url: 'https://mail.google.com/mail/u/0/#all/' + thread })),
     };
   }).filter(c => c.name);
   return {
