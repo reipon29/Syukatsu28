@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '2.10.0';
+const APP_VERSION = '2.10.1';
 const STORAGE_KEY = 'syukatsu.v1';
 
 const STATUSES = [
@@ -2468,6 +2468,18 @@ $('#gsync-url').addEventListener('change', e => {
   if (v) runGmailSync(true);
 });
 $('#gsync-run').addEventListener('click', () => runGmailSync(true));
+// 設置用のスクリプト・設定をコピー（.gs はブラウザで開くとダウンロードされてしまうため）
+$('#gsync-panel').addEventListener('click', async e => {
+  const b = e.target.closest('[data-copy-gas]');
+  if (!b) return;
+  try {
+    const text = await (await fetch(b.dataset.copyGas, { cache: 'no-store' })).text();
+    await navigator.clipboard.writeText(text);
+    toast(`コピーしました（${text.split('\n').length}行）。エディタに貼り付けてください`);
+  } catch {
+    toast('コピーできませんでした。PC のブラウザで試してください');
+  }
+});
 renderGsync();
 // 開いたとき・アプリに戻ってきたときに、前回から3時間以上たっていれば自動で同期
 function gsyncAuto() {

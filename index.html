@@ -169,9 +169,9 @@
           <summary>設置のしかた（最初に1回・5分）</summary>
           <ol class="note small clipper-steps">
             <li>PC のブラウザで <a href="https://script.google.com/home/projects/create" target="_blank" rel="noopener">script.google.com</a> を開く（新しいプロジェクトが作られます）。左上の名前を「就活管理 Gmail同期」に変える</li>
-            <li><a href="gas/gmail-sync.gs" target="_blank" rel="noopener">スクリプト</a>を開いて全部コピーし、エディタの中身を全部消して貼り付け →  保存（💾）</li>
-            <li>左の ⚙️「プロジェクトの設定」→「appsscript.json マニフェスト ファイルをエディタで表示する」にチェック → エディタに戻って appsscript.json を開き、<a href="gas/appsscript.json" target="_blank" rel="noopener">この内容</a>に置き換えて保存</li>
-            <li>右上「デプロイ」→「新しいデプロイ」→ ⚙️ で「ウェブアプリ」を選ぶ → 次のユーザーとして実行「自分」、アクセスできるユーザー「全員」→「デプロイ」。Google のログインと許可の画面が出たら許可する（「このアプリは確認されていません」と出たら「詳細」→「（安全ではないページ）に移動」）</li>
+            <li><button type="button" class="btn small" data-copy-gas="gas/gmail-sync.gs">📋 スクリプトをコピー</button> を押し、エディタの「コード.gs」の中身を全部消して貼り付け → 保存（💾）。関数の選択に「setup」が出ればOK</li>
+            <li>左の ⚙️「プロジェクトの設定」→「appsscript.json マニフェスト ファイルをエディタで表示する」にチェック → エディタに戻って appsscript.json を開き、<button type="button" class="btn small" data-copy-gas="gas/appsscript.json">📋 設定をコピー</button> した内容に全部置き換えて保存</li>
+            <li>右上「デプロイ」→「新しいデプロイ」→ ⚙️ で「ウェブアプリ」を選ぶ → 次のユーザーとして実行「自分」、アクセスできるユーザー「全員」→「デプロイ」（すでにデプロイ済みでコードを貼り直したときは「デプロイを管理」→ ✏️ → バージョン「新バージョン」→「デプロイ」）。Google のログインと許可の画面が出たら許可する（「このアプリは確認されていません」と出たら「詳細」→「（安全ではないページ）に移動」）</li>
             <li>上の関数の選択で「setup」を選んで「実行」→ 下の実行ログに出た URL（…?token=…）をコピーして、この画面の「同期用 URL」に貼り付ける</li>
           </ol>
           <p class="note small">最初は過去8か月分を読むので、全部そろうまで数時間かかることがあります（1時間ごとに自動で続きを読みます）。同期用 URL を知っている人は企業名やマイページIDを見られるので、人に教えないでください。</p>
