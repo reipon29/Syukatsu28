@@ -694,3 +694,12 @@ dialog > *, dialog form > * { min-width: 0; max-width: 100%; }
 .triage-buttons .tb.maybe { color: var(--star); width: 56px; height: 56px; align-self: center; }
 .triage-buttons .tb.yes { color: var(--green); }
 .triage-dialog .dialog-body { justify-content: center; }
+
+/* ============ URL から募集要項を取り込む ============ */
+.url-import { display: grid; gap: 8px; }
+.url-import input { width: 100%; }
+.url-import-btns { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
+.url-import .note a { color: var(--accent); }
+.or-line { display: flex; align-items: center; gap: 10px; color: var(--faint, var(--muted)); font-size: 12px; margin: 14px 0 4px; }
+.or-line::before, .or-line::after { content: ''; flex: 1; border-top: 1px solid var(--border); }
+.bulk-banner { background: linear-gradient(135deg, #0f766e, var(--accent)); }

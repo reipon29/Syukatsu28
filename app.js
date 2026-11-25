@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '2.10.2';
+const APP_VERSION = '2.11.0';
 const STORAGE_KEY = 'syukatsu.v1';
 
 const STATUSES = [
@@ -115,6 +115,7 @@ function normalizeCompany(c) {
     tokyo: TOKYO[c.tokyo] ? c.tokyo : '',
     route: str(c.route),
     url: str(c.url),
+    site: str(c.site), // 採用サイト（募集要項を探すときの起点）
     loginId: str(c.loginId),
     pwd: normalizePwd(c.pwd),
     postings,
@@ -654,6 +655,7 @@ const rowLabel = r => {
 };
 const rowText = r => r.c.name + (r.title ? `（${r.title}）` : '');
 function renderCompare() {
+  renderBulkBanner();
   fillIndustryFilters();
   const metric = METRICS.find(m => m.key === $('#cmp-metric').value) || METRICS[0];
   const rows = compareTargets();
@@ -864,6 +866,9 @@ function openCompany(id, postingId) {
   editing = src ? structuredClone(src) : normalizeCompany({ name: '', status: 'entry', createdAt: Date.now() });
   $('#company-dialog-title').textContent = src ? '企業を編集' : '企業を追加';
   ['name', 'status', 'hq', 'locations', 'tokyo', 'url', 'loginId', 'memo'].forEach(k => { cForm[k].value = editing[k]; });
+  $('#posting-url').value = editing.site;
+  $('#posting-fetch-status').textContent = '';
+  updateFetchUi();
   setIndustry(editing.industry);
   if (!editing.postings.length) editing.postings.push(normalizePosting());
   curPosting = Math.max(0, editing.postings.findIndex(p => p.id === postingId));
@@ -1038,6 +1043,7 @@ cForm.p_applied.addEventListener('change', renderPostingTabs);
 
 function readCompanyForm() {
   ['name', 'hq', 'locations', 'url', 'loginId'].forEach(k => { editing[k] = cForm[k].value.trim(); });
+  editing.site = $('#posting-url').value.trim();
   editing.industry = currentIndustry();
   editing.status = cForm.status.value;
   editing.tokyo = cForm.tokyo.value;
@@ -1071,6 +1077,7 @@ cForm.addEventListener('submit', async e => {
   cDialog.close();
   toast('保存しました');
   render();
+  if (reviewQueue.length) { setTimeout(openNextReview, 250); return; }
   openDetail(editing.id);
 });
 
@@ -1084,6 +1091,10 @@ function hasUnsavedChanges() {
 function tryCloseCompany() {
   if (hasUnsavedChanges() && !confirm('変更が保存されていません。破棄して閉じますか？')) return;
   cDialog.close();
+  if (reviewQueue.length) {
+    if (confirm(`まとめて取得した募集要項の確認が、あと ${reviewQueue.length}社 あります。続けますか？`)) { setTimeout(openNextReview, 250); return; }
+    reviewQueue = [];
+  }
   if (findCompany(editing.id)) openDetail(editing.id); // 詳細から開いた場合は詳細に戻る
 }
 cDialog.querySelector('[data-close]').addEventListener('click', tryCloseCompany);
@@ -1153,7 +1164,9 @@ function labelField(t, exactOnly = false) {
   for (const [field, labels] of POSTING_LABELS) {
     for (const l of labels) {
       if (t === l) return field;
-      if (!exactOnly && t.startsWith(l) && /^[（(]/.test(t.slice(l.length)) && t.length <= l.length + 14) return field;
+      // 「初任給（月額）」は見出し。ただし「本社（東京都港区）」のようにカッコの中が住所なら内容の行
+      if (!exactOnly && t.startsWith(l) && /^[（(]/.test(t.slice(l.length)) && t.length <= l.length + 14 &&
+        !/東京都|北海道|京都府|大阪府|[^\s（(）)]{1,3}県|[^\s（(）)]{1,5}[市区町村]/.test(t.slice(l.length))) return field;
     }
   }
   return null;
@@ -1288,7 +1301,9 @@ cForm.p_salaryNote.addEventListener('input', showSalaryCandidates);
 /** 前年度（1つ上の学年向け）の募集要項か */
 function isPrevYearPosting(raw, gradYear) {
   const pat = y => new RegExp(`${y}年(?:度|卒|3月)|${String(y).slice(2)}卒|${y}年\\s*3月`);
-  return pat(gradYear - 1).test(raw) && !pat(gradYear).test(raw);
+  // 「2028年度新卒採用インターンシップ」のような、インターンについての行は年度の判定に使わない
+  const body = raw.split('\n').filter(l => !/インターン|internship/i.test(l)).join('\n');
+  return pat(gradYear - 1).test(body) && !pat(gradYear).test(body);
 }
 /** 募集職種の欄から職種名の一覧を取り出す（「総合職\nバックオフィス職」→ 2つ） */
 function detectJobs(jobText) {
@@ -1697,7 +1712,7 @@ function mergeCompany(cur, inc) {
     events: unionById(cur.events, inc.events, pickNewer),
   };
   // 新しい方で空欄の項目は、古い方の値で補う
-  ['industry', 'hq', 'locations', 'tokyo', 'route', 'url', 'loginId', 'memo'].forEach(k => { if (!out[k] && older[k]) out[k] = older[k]; });
+  ['industry', 'hq', 'locations', 'tokyo', 'route', 'url', 'site', 'loginId', 'memo'].forEach(k => { if (!out[k] && older[k]) out[k] = older[k]; });
   if (!out.pwd && older.pwd) out.pwd = older.pwd;
   if (!out.postings.length) out.postings = newer.postings;
   const seen = new Set();
@@ -2376,7 +2391,7 @@ function applyGmailSync(data) {
     const cur = state.companies.find(c => c.id === inc.id) || state.companies.find(c => nameKey(c.name) === key);
     if (!cur) {
       const c = normalizeCompany({
-        id: inc.id, name: inc.name, status: inc.status, priority: inc.priority, url: inc.url, loginId: inc.loginId,
+        id: inc.id, name: inc.name, status: inc.status, priority: inc.priority, url: inc.url, site: inc.site, loginId: inc.loginId,
         memo: inc.memo, events, createdAt: now, updatedAt: now,
         history: STATUS_MAP[inc.status] && inc.status !== 'interest' ? [{ status: inc.status, at: statusAt }] : [],
       });
@@ -2388,6 +2403,7 @@ function applyGmailSync(data) {
     const before = JSON.stringify(cur);
     if (!cur.url && inc.url) cur.url = str(inc.url);
     if (!cur.loginId && inc.loginId) cur.loginId = str(inc.loginId);
+    if (!cur.site && inc.site) cur.site = str(inc.site);
     for (const ev of events) {
       if (cur.events.some(e => e.id === ev.id || (e.date === ev.date && e.title === ev.title))) continue;
       cur.events.push(normalizeEvent(ev));
@@ -2493,6 +2509,120 @@ function gsyncAuto() {
 }
 setTimeout(gsyncAuto, 1500);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) gsyncAuto(); });
+
+/* ---------- 募集要項を URL から取り込む（gas/gmail-sync.gs 経由） ---------- */
+// アプリ（GitHub Pages）からは他社のサイトを直接読めないので、自分の Google スクリプトに読んでもらう
+const BLOCKED_SITE = /(?:^|\.)(?:mynavi\.jp|rikunabi\.com|onecareer\.jp|offerbox\.jp|gaishishukatsu\.com|unistyle\.jp)$/i;
+async function gasCall(action, url) {
+  const base = gsyncConf().url;
+  if (!base) throw new Error('Gmail同期の設定（その他 →「Gmailから自動で取り込む」）をすると使えます');
+  const res = await fetch(`${base}&action=${action}&url=${encodeURIComponent(url)}`, { cache: 'no-store' });
+  const data = await res.json();
+  if (data.error === 'unauthorized') throw new Error('同期用 URL のトークンが違います');
+  if (!data.ok) {
+    // 古いスクリプトは action を知らずに同期データを返す
+    if (data.source === 'gmail-sync') throw new Error('Google のスクリプトが古いままです。新しいスクリプトを貼り付けて「新バージョン」でデプロイしてください');
+    throw new Error(data.error || '読み込めませんでした');
+  }
+  return data;
+}
+function updateFetchUi() {
+  const ready = Boolean(gsyncConf().url);
+  ['#posting-find', '#posting-fetch'].forEach(s => { $(s).disabled = !ready; });
+  if (!ready) $('#posting-fetch-status').textContent = 'URL から取り込むには、その他 →「Gmailから自動で取り込む」の設定が必要です。下の貼り付けはいつでも使えます。';
+}
+function checkPostingUrl(url) {
+  if (!/^https?:\/\/[^\s]+$/.test(url)) return '採用サイトの URL（https://〜）を入力してください';
+  const host = (url.match(/^https?:\/\/([^/?#:]+)/) || [])[1] || '';
+  if (BLOCKED_SITE.test(host)) return 'マイナビ・リクナビなどの就活サイトは利用規約で自動取得が禁止されているので読めません。企業の採用サイトの URL を入れるか、ブックマークで取り込んでください';
+  return '';
+}
+/** 取得した本文を募集要項の欄に流し込む */
+function fillFetchedPosting(data) {
+  // ページの見出しと内容の間に空行があると読み取れないので詰める
+  cForm.p_raw.value = data.text.replace(/\n[ \t\u3000]*\n+/g, '\n');
+  if (!cForm.name.value.trim()) {
+    const nm = guessCompanyName(data.title, data.text);
+    if (nm) { cForm.name.value = nm; updateIndustryUi(); }
+  }
+  applyPosting(true);
+  // どのページから読んだかを職種の「その他」に残す
+  if (!cForm.p_note.value.includes(data.url)) cForm.p_note.value = `${cForm.p_note.value ? cForm.p_note.value + '\n' : ''}出典: ${data.url}`;
+}
+async function importPostingFromUrl(action) {
+  const url = $('#posting-url').value.trim();
+  const status = $('#posting-fetch-status');
+  const bad = checkPostingUrl(url);
+  if (bad) { status.textContent = bad; $('#posting-url').focus(); return; }
+  const btns = ['#posting-find', '#posting-fetch'].map(s => $(s));
+  btns.forEach(b => { b.disabled = true; });
+  status.textContent = action === 'find' ? '採用サイトの中から募集要項を探しています…（最大30秒ほど）' : 'ページを読み込んでいます…';
+  try {
+    const data = await gasCall(action, url);
+    if (action === 'find' && !data.found) {
+      status.innerHTML = `募集要項らしいページが見つかりませんでした（${data.tried?.length || 1}ページを確認）。募集要項のページを開いてその URL を入れ、「このページを読む」を試すか、ブックマークで取り込んでください。`;
+      return;
+    }
+    fillFetchedPosting(data);
+    status.innerHTML = `「${esc(data.title || data.url)}」から読み取りました。<a href="${esc(data.url)}" target="_blank" rel="noopener">ページを開く</a>`;
+  } catch (err) {
+    status.textContent = err.message;
+  } finally {
+    updateFetchUi();
+    btns.forEach(b => { if (gsyncConf().url) b.disabled = false; });
+  }
+}
+$('#posting-find').addEventListener('click', () => importPostingFromUrl('find'));
+$('#posting-fetch').addEventListener('click', () => importPostingFromUrl('fetch'));
+
+/* ---------- ★3の企業の募集要項をまとめて取得 → 1社ずつ確認して保存 ---------- */
+let reviewQueue = []; // [{ id, data }]
+const bulkTargets = () => state.companies.filter(c => c.priority === 3 && ACTIVE_STATUSES.has(c.status) && !hasPosting(c));
+function renderBulkBanner() {
+  const el = $('#bulk-posting');
+  const all = bulkTargets();
+  const withSite = all.filter(c => c.site);
+  el.hidden = !all.length || !gsyncConf().url;
+  if (el.hidden) return;
+  el.innerHTML = `<div class="tb-text"><b>★3なのに募集要項が未入力の企業が ${all.length}社</b>
+    <span>${withSite.length ? `採用サイトが分かっている ${withSite.length}社 をまとめて探し、1社ずつ確認して保存できます。` : ''}${all.length > withSite.length ? `${all.length - withSite.length}社は採用サイトの URL が未登録です（企業の編集画面で入力できます）。` : ''}</span></div>
+    ${withSite.length ? '<button class="btn primary" data-bulk-find>まとめて探す</button>' : ''}`;
+}
+let bulkBusy = false;
+async function bulkFindPostings() {
+  if (bulkBusy) return;
+  const targets = bulkTargets().filter(c => c.site && !checkPostingUrl(c.site));
+  if (!targets.length) return;
+  if (!confirm(`${targets.length}社の採用サイトから募集要項を探します（1社10〜30秒ほど。この画面を開いたままにしてください）。`)) return;
+  bulkBusy = true;
+  const btn = $('[data-bulk-find]');
+  const found = [];
+  const failed = [];
+  for (const [i, c] of targets.entries()) {
+    if (btn) btn.textContent = `探しています… ${i + 1}/${targets.length}`;
+    try {
+      const data = await gasCall('find', c.site);
+      if (data.found) found.push({ id: c.id, data }); else failed.push(c.name);
+    } catch { failed.push(c.name); }
+  }
+  bulkBusy = false;
+  renderBulkBanner();
+  if (failed.length) toast(`見つからなかった企業：${failed.slice(0, 4).join('、')}${failed.length > 4 ? ' ほか' : ''}（ブックマークで取り込めます）`);
+  if (!found.length) return;
+  reviewQueue = found;
+  alert(`${found.length}社の募集要項が見つかりました。1社ずつ内容を確認して「保存」してください（保存すると次の企業に進みます）。`);
+  openNextReview();
+}
+function openNextReview() {
+  const r = reviewQueue.shift();
+  if (!r) return;
+  if (!findCompany(r.id)) { openNextReview(); return; }
+  openCompany(r.id);
+  $('#posting-section').open = true;
+  fillFetchedPosting(r.data);
+  $('#posting-fetch-status').innerHTML = `「${esc(r.data.title || r.data.url)}」から読み取りました${reviewQueue.length ? `（このあと ${reviewQueue.length}社）` : ''}。内容を確認して保存してください。`;
+}
+$('#view-compare').addEventListener('click', e => { if (e.target.closest('[data-bulk-find]')) bulkFindPostings(); });
 
 /* ---------- 今日やること ---------- */
 const loadJSON = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };

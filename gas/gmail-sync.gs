@@ -80,10 +80,18 @@ function resetSync() {
 }
 
 /** アプリからの取得 */
+const SCRIPT_VERSION = 2;
 function doGet(e) {
+  const p = (e && e.parameter) || {};
+  if (p.action === 'version') return json_({ app: 'syukatsu-gas', version: SCRIPT_VERSION });
   const props = PropertiesService.getScriptProperties();
   const token = props.getProperty('token');
-  if (!token || !e || !e.parameter || e.parameter.token !== token) return json_({ error: 'unauthorized' });
+  if (!token || p.token !== token) return json_({ error: 'unauthorized' });
+  // 募集要項の取得（アプリの「URLから取り込む」「募集要項を探す」）
+  if (p.action === 'fetch' || p.action === 'find') {
+    try { return json_(p.action === 'fetch' ? fetchPosting_(p.url) : findPosting_(p.url)); }
+    catch (err) { return json_({ ok: false, error: String(err && err.message || err) }); }
+  }
   let r = null;
   try { r = sync_(WEB_LIMIT_MS); } catch (err) { console.warn(err); }
   const store = loadStore_();
@@ -368,6 +376,8 @@ function applyMessage_(c, m, ctx) {
   const login = findLogin_(body);
   if (login.id) c.ids[login.id] = (c.ids[login.id] || 0) + 1;
   if (login.url) c.urls[login.url] = (c.urls[login.url] || 0) + 1;
+  const site = findRecruitSite_(body);
+  if (site) { c.sites = c.sites || {}; c.sites[site] = (c.sites[site] || 0) + 1; }
   for (const r of classify_(m.subject, body)) {
     if (r.engaged) c.engaged = true;
     if (r.note) addNote_(c, m, r.note);
@@ -402,6 +412,7 @@ function trimCompany_(c) {
   c.names = top(c.names, 4);
   c.ids = top(c.ids, 4);
   c.urls = top(c.urls, 3);
+  if (c.sites) c.sites = top(c.sites, 3);
   c.notes = c.notes.sort((a, b) => a.at - b.at).slice(-10);
   c.events = c.events.sort((a, b) => (a.date < b.date ? -1 : 1)).slice(-10);
   if (c.replies) c.replies = Object.fromEntries(Object.entries(c.replies).sort((a, b) => b[1].at - a[1].at).slice(0, 5));
@@ -422,7 +433,7 @@ function exportForApp_(store, r) {
       ...c.notes.slice().sort((a, b) => a.at - b.at).map(n => `・${fmt(n.at).slice(5)} ${n.text}`)].join('\n');
     return {
       id: 'gm-' + hash_(c.key), name, status: c.status, statusAt: c.statusAt, priority, engaged: c.engaged,
-      url: best(c.urls), loginId: best(c.ids), memo,
+      url: best(c.urls), loginId: best(c.ids), memo, site: best(c.sites || {}),
       events: c.events.map(e => ({ ...e, done: e.date < today })),
       mailCount: c.mailCount, lastAt: c.lastAt,
       replies: Object.entries(c.replies || {}).map(([thread, r]) => ({ thread, at: r.at, subject: r.subject, url: 'https://mail.google.com/mail/u/0/#all/' + thread })),
@@ -433,4 +444,177 @@ function exportForApp_(store, r) {
     syncedAt: store.meta.syncedAt || null, complete: store.meta.cursor >= Math.floor(Date.now() / 1000) - 3600 * 2,
     companies,
   };
+}
+
+/* ===================== 募集要項の取得 ===================== */
+// アプリから「この URL を読んで」「この採用サイトから募集要項を探して」と頼まれたときに使う。
+// 就活サイト（マイナビ・リクナビなど）は利用規約で自動取得が禁止されているので読まない。
+
+const BLOCK_HOSTS = /(?:^|\.)(?:mynavi\.jp|rikunabi\.com|onecareer\.jp|offerbox\.jp|gaishishukatsu\.com|unistyle\.jp)$/i;
+const FETCH_LIMIT_MS = 25 * 1000;
+const MAX_FETCH = 8;
+const TEXT_MAX = 30000;
+
+function fetchPosting_(url) {
+  const page = fetchPage_(url);
+  return { ok: true, url: page.url, title: page.title, text: page.text.slice(0, TEXT_MAX), score: scorePage_(page.text) };
+}
+
+/** 採用サイトのトップなどから、リンクをたどって募集要項らしいページを探す（最大8ページ） */
+function findPosting_(url) {
+  const started = Date.now();
+  const first = fetchPage_(url);
+  const pages = [first];
+  const norm = u => u.split('#')[0].replace(/\/$/, '');
+  const seen = new Set([norm(first.url)]);
+  let frontier = rankLinks_(first);
+  for (let depth = 0; depth < 2 && Date.now() - started < FETCH_LIMIT_MS; depth++) {
+    const next = [];
+    for (const link of frontier.slice(0, depth === 0 ? 5 : 3)) {
+      if (pages.length >= MAX_FETCH || Date.now() - started > FETCH_LIMIT_MS) break;
+      if (seen.has(norm(link.url))) continue;
+      seen.add(norm(link.url));
+      try {
+        const pg = fetchPage_(link.url);
+        pages.push(pg);
+        if (scorePage_(pg.text) < 12) next.push(...rankLinks_(pg));
+      } catch (e) { /* 読めないページは飛ばす */ }
+    }
+    if (pages.some(pg => scorePage_(pg.text) >= 20)) break;
+    frontier = next.filter(l => !seen.has(norm(l.url))).sort((a, b) => b.score - a.score);
+  }
+  const best = pages.map(pg => ({ pg, score: scorePage_(pg.text) })).sort((a, b) => b.score - a.score)[0];
+  return {
+    ok: true, url: best.pg.url, title: best.pg.title, text: best.pg.text.slice(0, TEXT_MAX), score: best.score,
+    found: best.score >= 12, tried: pages.map(pg => pg.url),
+  };
+}
+
+function fetchPage_(url) {
+  url = String(url || '').trim();
+  if (!/^https?:\/\//i.test(url)) throw new Error('URL が正しくありません');
+  if (BLOCK_HOSTS.test(hostOf_(url))) throw new Error('就活サイト（マイナビ・リクナビなど）のページは読み込めません。企業の採用サイトの URL を使ってください');
+  const res = UrlFetchApp.fetch(url, {
+    muteHttpExceptions: true, followRedirects: true,
+    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; syukatsu-personal-tool)', 'Accept-Language': 'ja,en;q=0.5' },
+  });
+  const code = res.getResponseCode();
+  if (code >= 400) throw new Error(`ページを開けませんでした（${code}）。ログインが必要なページは、ブックマークで取り込んでください`);
+  let html = res.getContentText();
+  const cs = (html.slice(0, 3000).match(/charset=["']?([\w-]+)/i) || [])[1] || '';
+  if (/shift_jis|sjis|x-sjis|windows-31j|cp932/i.test(cs)) html = res.getContentText('Shift_JIS');
+  else if (/euc-jp/i.test(cs)) html = res.getContentText('EUC-JP');
+  return parseHtml_(html, url);
+}
+
+function parseHtml_(html, url) {
+  const title = decodeEntities_(((html.match(/<title[^>]*>([\s\S]*?)<\/title>/i) || [])[1] || '').replace(/\s+/g, ' ').trim());
+  const links = [];
+  const re = /<a\s[^>]*?href\s*=\s*["']([^"'#][^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi;
+  let m;
+  while ((m = re.exec(html)) && links.length < 400) {
+    const text = decodeEntities_(m[2].replace(/<img[^>]*alt=["']([^"']*)["'][^>]*>/gi, ' $1 ').replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim();
+    const abs = resolveUrl_(url, decodeEntities_(m[1]));
+    if (abs) links.push({ url: abs, text });
+  }
+  return { url, title, text: htmlToText_(html), links };
+}
+
+function htmlToText_(html) {
+  let h = String(html)
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<(script|style|noscript|svg|template|iframe)\b[\s\S]*?<\/\1>/gi, '')
+    .replace(/<(header|nav|footer)\b[\s\S]*?<\/\1>/gi, '\n');
+  const body = h.match(/<body[^>]*>([\s\S]*)<\/body>/i);
+  if (body) h = body[1];
+  h = h.replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|li|tr|h[1-6]|dt|dd|th|td|table|section|article|ul|ol|dl|caption)>/gi, '\n')
+    .replace(/<(p|div|li|tr|h[1-6]|dt|dd|th|td|table|section|article|dl)\b[^>]*>/gi, '\n')
+    .replace(/<[^>]+>/g, '');
+  return decodeEntities_(h).split('\n').map(l => l.replace(/[ \t　]+/g, ' ').trim())
+    .filter(Boolean) // 見出しと内容の間の空行はアプリの読み取りの邪魔になるので消す
+    .join('\n').trim();
+}
+
+function decodeEntities_(s) {
+  const named = { nbsp: ' ', amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", yen: '¥', copy: '©', times: '×', ndash: '–', mdash: '—', hellip: '…' };
+  return String(s)
+    .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(Number(d)))
+    .replace(/&([a-z]+);/gi, (all, n) => (n.toLowerCase() in named ? named[n.toLowerCase()] : all));
+}
+
+function hostOf_(url) { return ((String(url).match(/^https?:\/\/([^/?#:]+)/i) || [])[1] || '').toLowerCase(); }
+/** 同じ会社のサイトか（recruit.example.co.jp と www.example.co.jp を同じとみなす） */
+function siteKey_(host) {
+  const parts = host.split('.');
+  const n = /\.(?:co|or|ne|ac|go)\.jp$/.test(host) ? 3 : 2;
+  return parts.slice(-n).join('.');
+}
+function resolveUrl_(base, href) {
+  href = String(href || '').trim();
+  if (/^(?:mailto|tel|javascript|data):/i.test(href)) return '';
+  if (/^https?:\/\//i.test(href)) return href;
+  const origin = (String(base).match(/^https?:\/\/[^/?#]+/i) || [''])[0];
+  if (!origin) return '';
+  if (href.startsWith('//')) return base.split(':')[0] + ':' + href;
+  let path;
+  if (href.startsWith('/')) path = href;
+  else {
+    const dir = String(base).slice(origin.length).split(/[?#]/)[0].replace(/[^/]*$/, '') || '/';
+    path = dir + href;
+  }
+  const [p, ...rest] = path.split(/(?=[?#])/);
+  const out = [];
+  p.split('/').forEach(seg => { if (seg === '..') out.pop(); else if (seg !== '.') out.push(seg); });
+  return origin + (out.join('/').startsWith('/') ? '' : '/') + out.join('/') + rest.join('');
+}
+
+/** リンクの文字・URL から「募集要項へのリンクらしさ」を点数にする */
+function scoreLink_(link) {
+  const t = norm_(link.text);
+  const u = link.url.toLowerCase();
+  let s = 0;
+  if (/募集要項/.test(t)) s += 12;
+  if (/応募資格|募集職種|待遇|給与|処遇|労働条件/.test(t)) s += 7;
+  if (/採用情報|新卒採用|新卒|採用データ|数字で見る/.test(t)) s += 5;
+  if (/requirement|guideline|youkou|yoko|boshu|condition/.test(u)) s += 8;
+  if (/recruit|saiyo|fresh|graduate|newgrad|shinsotsu|career\/new/.test(u)) s += 2;
+  if (/中途|キャリア採用|経験者|障がい|障害者|アルバイト|パート|インターン/.test(t) || /mid-?career|career-recruit|experienced/.test(u)) s -= 10;
+  if (/\.(?:pdf|jpg|png|zip|docx?)$/.test(u)) s -= 20;
+  return s;
+}
+function rankLinks_(page) {
+  const site = siteKey_(hostOf_(page.url));
+  const best = {};
+  for (const l of page.links) {
+    if (siteKey_(hostOf_(l.url)) !== site || BLOCK_HOSTS.test(hostOf_(l.url))) continue;
+    const url = l.url.split('#')[0];
+    if (url === page.url) continue;
+    const score = scoreLink_(l);
+    if (score > 0 && (!best[url] || best[url].score < score)) best[url] = { url, score, text: l.text };
+  }
+  return Object.values(best).sort((a, b) => b.score - a.score);
+}
+/** ページ本文の「募集要項らしさ」 */
+function scorePage_(text) {
+  const t = norm_(text);
+  const words = { 初任給: 6, 月給: 3, 勤務地: 4, 休日: 3, 勤務時間: 3, 福利厚生: 3, 応募資格: 4, 賞与: 3, 手当: 2, 募集職種: 4, 試用期間: 2, 昇給: 2, 募集要項: 4 };
+  let s = 0;
+  for (const [w, pt] of Object.entries(words)) s += Math.min(2, t.split(w).length - 1) * pt;
+  return s;
+}
+
+/** メール本文から、企業の採用サイトらしい URL を探す */
+function findRecruitSite_(body) {
+  const b = norm_(body);
+  const urls = b.match(/https?:\/\/[^\s<>"'」)\]]+/g) || [];
+  const ats = /snar\.jp|axol\.jp|e2r\.jp|saiyo\.jp|i-webs\.jp|hrmos\.co|mypage|mynavi|rikunabi|eeasy\.jp|youtube|youtu\.be|twitter|x\.com|instagram|facebook|line\.me|bit\.ly|x\.gd|forms\.gle|google\.com|zoom\.us|teams|recruit-mg\.com|disc\.co\.jp|e-pages|tayori|note\.com|wantedly/i;
+  for (const raw of urls) {
+    const u = raw.replace(/[.,、。]+$/, '').split('?')[0];
+    if (ats.test(u)) continue;
+    const ctx = b.slice(Math.max(0, b.indexOf(raw) - 40), b.indexOf(raw));
+    if (/recruit|saiyo|fresh|graduate|newgrad|shinsotsu|careers?\//i.test(u) || /採用(?:ホームページ|サイト|HP|情報|ページ)|新卒採用/.test(ctx)) return u;
+  }
+  return '';
 }

@@ -126,6 +126,7 @@
         <label>業界<select id="cmp-industry"></select></label>
         <label class="check-inline span2"><input id="cmp-tokyo" type="checkbox"> 東京勤務の可能性がある職種のみ（◎・△）</label>
       </div>
+      <div id="bulk-posting" class="triage-banner bulk-banner" hidden></div>
       <div class="panel chart-panel">
         <h2 id="cmp-title"></h2>
         <p id="cmp-sub" class="note"></p>
@@ -303,7 +304,18 @@
         </section>
 
         <section class="fgroup paste-box">
-          <h3 class="fg-title">📋 募集要項を貼り付けて自動入力</h3>
+          <h3 class="fg-title">📋 募集要項を自動入力</h3>
+          <div class="url-import">
+            <label class="plain">採用サイト・募集要項の URL
+              <input id="posting-url" type="url" inputmode="url" autocomplete="off" placeholder="https://recruit.〇〇.co.jp/">
+            </label>
+            <div class="url-import-btns">
+              <button type="button" id="posting-find" class="btn primary">🔎 募集要項を探す</button>
+              <button type="button" id="posting-fetch" class="btn">このページを読む</button>
+            </div>
+            <p class="note small" id="posting-fetch-status"></p>
+          </div>
+          <div class="or-line"><span>または</span></div>
           <p class="note small">採用サイトの「募集要項」をまるごとコピーして、ボタンを押すか下の欄に貼り付けると各項目に入力されます。</p>
           <button type="button" id="paste-clipboard" class="btn primary full-w">コピーした募集要項を貼り付け</button>
           <p id="paste-target" class="note small paste-target" hidden></p>
