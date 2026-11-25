@@ -155,6 +155,22 @@
           <label class="plain">学歴<select id="profile-degree"></select></label>
         </div>
       </div>
+      <div class="panel" id="clipper-panel">
+        <h2>📥 採用ページから取り込む（ブックマーク）</h2>
+        <p class="note">募集要項・エントリー画面・マイページを開いた状態でこのブックマークを押すと、ページの文章を読み取って企業の登録画面に自動入力します。文字を選択してから押すと、選択した部分だけを読み取ります。</p>
+        <label class="plain">送り方
+          <select id="clipper-mode">
+            <option value="open">ブラウザで開いたアプリに送る</option>
+            <option value="copy">コピーだけする（ホーム画面のアプリで貼り付け）</option>
+          </select>
+        </label>
+        <p class="note small" id="clipper-mode-note"></p>
+        <div class="btn-col" style="margin-top:10px">
+          <a id="clipper-link" class="btn" href="#" hidden>📥 就活管理に取り込む</a>
+          <button id="clipper-copy" type="button" class="btn primary">ブックマーク用のコードをコピー</button>
+        </div>
+        <ol class="note small clipper-steps" id="clipper-steps"></ol>
+      </div>
       <div class="panel">
         <h2>表示</h2>
         <label class="plain">テーマ

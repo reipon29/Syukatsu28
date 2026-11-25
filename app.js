@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '2.7.1';
+const APP_VERSION = '2.8.0';
 const STORAGE_KEY = 'syukatsu.v1';
 
 const STATUSES = [
@@ -1311,6 +1311,9 @@ function rawForJob(raw, jobs, job) {
   }).join('\n');
 }
 function applyPosting(auto = false) {
+  // ブックマークでコピーしたテキストなら、先頭の URL・ページ名を取り出して使う
+  const clip = splitClip(cForm.p_raw.value);
+  if (clip) { cForm.p_raw.value = clip.text; fillClipMeta(clip); }
   const raw = cForm.p_raw.value;
   if (!raw.trim()) { if (!auto) toast('募集要項のテキストを貼り付けてください'); return; }
   const jobs = editing.postings.length === 1 && !cForm.p_title.value.trim() ? detectJobs(parsePosting(raw).job) : [];
@@ -2230,6 +2233,127 @@ document.addEventListener('click', e => {
   e.preventDefault();
   openInSafari(a.href);
 }, true);
+
+/* ---------- 採用ページから取り込む（ブックマークレット） ---------- */
+// ブックマークレットは、開いているページの文章を
+//  ・open: このアプリを新しいタブで開き、postMessage で渡す（PC・Safari で使う場合）
+//  ・copy: 先頭に「#就活管理 URL」を付けてクリップボードにコピーする（iPhone のホーム画面アプリ用。
+//          Safari とホーム画面のアプリは保存場所が別なので、貼り付けで渡す）
+const CLIP_MARK = '#就活管理 ';
+const CLIP_MAX = 30000;
+function splitClip(raw) {
+  if (!raw.startsWith(CLIP_MARK)) return null;
+  const [head, title = '', ...rest] = raw.split('\n');
+  return { url: head.slice(CLIP_MARK.length).trim(), title: title.trim(), text: rest.join('\n').trim() };
+}
+/** ページ名や本文から企業名を推定する（「株式会社〇〇」「〇〇株式会社」） */
+function guessCompanyName(title, text) {
+  const re = /(?:株式会社|\(株\)|（株）)\s?[^\s|｜\-–—:：【】\[\]()（）「」『』/・,、。]{1,20}|[^\s|｜\-–—:：【】\[\]()（）「」『』/・,、。]{1,20}\s?(?:株式会社|\(株\)|（株）)/;
+  for (const src of [title, text.slice(0, 3000)]) {
+    const m = String(src).match(re);
+    if (m && !/採用|求人|応募|マイページ|ログイン/.test(m[0])) return m[0].replace(/\s+/g, ' ').trim();
+  }
+  return '';
+}
+function fillClipMeta(clip) {
+  if (!cForm.url.value.trim() && /^https?:\/\//.test(clip.url)) { cForm.url.value = clip.url; updateOpenUrl(); }
+  if (!cForm.name.value.trim()) {
+    const nm = guessCompanyName(clip.title, clip.text);
+    if (nm) { cForm.name.value = nm; updateIndustryUi(); }
+  }
+}
+/** 登録済みの企業のうち、ページに名前が出てくるもの（長い名前を優先） */
+function findClipCompany(clip) {
+  const hay = nameKey(`${clip.title}\n${clip.text.slice(0, 3000)}`);
+  return state.companies
+    .filter(c => { const k = nameKey(c.name); return k.length >= 2 && hay.includes(k); })
+    .sort((a, b) => nameKey(b.name).length - nameKey(a.name).length)[0] || null;
+}
+function receiveClip(d) {
+  const clip = { url: str(d.url), title: str(d.title), text: str(d.text).slice(0, CLIP_MAX) };
+  if (!clip.text.trim()) { toast('ページの文章を読み取れませんでした'); return; }
+  if (cDialog.open) cDialog.close();
+  const hit = findClipCompany(clip);
+  const useHit = hit && confirm(`「${hit.name}」のページとして取り込みますか？\n\nキャンセル → 新しい企業として追加`);
+  openCompany(useHit ? hit.id : null);
+  cForm.p_raw.value = `${CLIP_MARK}${clip.url}\n${clip.title}\n\n${clip.text}`;
+  applyPosting(true);
+  if (!cForm.name.value.trim()) setTimeout(() => toast('企業名を読み取れませんでした。企業名を入力して保存してください'), 2500);
+}
+// ブックマークレットから開かれたとき（#clip）は、開いたページからデータを受け取る
+if (location.hash === '#clip') {
+  history.replaceState(null, '', location.pathname + location.search);
+  let got = false;
+  window.addEventListener('message', e => {
+    if (got || !window.opener || e.source !== window.opener || !e.data || typeof e.data.syukatsuClip !== 'object') return;
+    got = true;
+    receiveClip(e.data.syukatsuClip);
+  });
+  if (window.opener) window.opener.postMessage('syukatsu-ready', '*');
+  setTimeout(() => {
+    if (!got) toast('ページの内容を受け取れませんでした。内容はコピーされているので「企業を追加」→「コピーした募集要項を貼り付け」を試してください');
+  }, 4000);
+}
+
+function bookmarkletCode(mode) {
+  const app = location.origin + location.pathname;
+  const src = `(()=>{
+const A=${JSON.stringify(app)},M=${JSON.stringify(mode)},K=${JSON.stringify(CLIP_MARK)};
+const g=d=>{let t='';try{t=d.body.innerText||''}catch(e){}try{for(const f of d.querySelectorAll('iframe,frame')){try{t+='\\n'+g(f.contentDocument)}catch(e){}}}catch(e){}return t};
+const s=String(getSelection()||'').trim();
+const t=(s.length>20?s:g(document)).replace(/[ \\t\\u3000]+\\n/g,'\\n').replace(/\\n{3,}/g,'\\n\\n').trim().slice(0,${CLIP_MAX});
+const d={title:document.title,url:location.href,text:t};
+const c=K+location.href+'\\n'+document.title+'\\n\\n'+t;
+const done=()=>alert('就活管理用にコピーしました（'+t.length+'文字）。\\nアプリで「企業を追加」→「コピーした募集要項を貼り付け」を押してください。');
+const ex=()=>{const a=document.createElement('textarea');a.value=c;a.style.cssText='position:fixed;top:0;left:0;opacity:0';document.body.appendChild(a);a.select();let ok=false;try{ok=document.execCommand('copy')}catch(e){}a.remove();return ok};
+const wc=()=>navigator.clipboard?navigator.clipboard.writeText(c):Promise.reject();
+const clip=()=>wc().then(done,()=>{if(ex()){done();return}const b=document.createElement('button');b.textContent='就活管理用にコピー';b.style.cssText='position:fixed;z-index:2147483647;top:12px;right:12px;padding:14px 18px;font-size:16px;background:#2563eb;color:#fff;border:0;border-radius:10px';b.onclick=()=>{b.remove();if(ex())done();else wc().then(done,()=>alert('コピーできませんでした'))};document.body.appendChild(b)});
+if(!t){alert('ページの文章を読み取れませんでした');return}
+if(M==='copy'){clip();return}
+wc().catch(()=>{});
+const w=window.open(A+'#clip','_blank');
+if(!w){clip();return}
+const o=new URL(A).origin;
+const f=e=>{if(e.source===w&&e.data==='syukatsu-ready'){w.postMessage({syukatsuClip:d},o);removeEventListener('message',f)}};
+addEventListener('message',f);
+})()`;
+  return 'javascript:' + encodeURIComponent(src.replace(/\n/g, ''));
+}
+const CLIP_MODE_KEY = 'syukatsu.clipMode';
+function renderClipper() {
+  const sel = $('#clipper-mode');
+  const mode = sel.value;
+  const code = bookmarkletCode(mode);
+  const link = $('#clipper-link');
+  link.href = code;
+  link.hidden = isIOS; // PC ではブックマークバーにドラッグして登録できる
+  $('#clipper-mode-note').textContent = mode === 'copy'
+    ? '押すとページの文章がコピーされます。アプリで「企業を追加」→「コピーした募集要項を貼り付け」で入力されます（URL・企業名も自動で入ります）。'
+    : '押すとこのアプリが新しいタブで開き、そのまま登録画面に入力されます。' +
+      (isIOS ? '※ホーム画面に追加したアプリを使っている場合は、Safari とデータが別々なので「コピーだけする」を選んでください。' : '');
+  const use = '使うとき：採用ページを開いて、ブックマークの「就活管理に取り込む」を押す。';
+  $('#clipper-steps').innerHTML = (isIOS ? [
+    '上のボタンでコードをコピーする',
+    'Safari で何かのページを開き、共有ボタン →「ブックマークを追加」（名前は「就活管理に取り込む」）',
+    'ブックマーク一覧 →「編集」→ 今追加したブックマークを開き、アドレスを全部消してコピーしたコードを貼り付ける',
+    use + 'アドレスバーに「就活」と入力すると候補に出るので、そこから押すと早い',
+  ] : [
+    '「📥 就活管理に取り込む」ボタンをブラウザのブックマークバーにドラッグする（ドラッグできないときは、コードをコピーして新しいブックマークの URL に貼り付ける）',
+    use,
+  ]).map(s => `<li>${esc(s)}</li>`).join('');
+}
+$('#clipper-mode').value = localStorage.getItem(CLIP_MODE_KEY) || (isIOS && isStandalone ? 'copy' : 'open');
+$('#clipper-mode').addEventListener('change', e => {
+  try { localStorage.setItem(CLIP_MODE_KEY, e.target.value); } catch { /* ignore */ }
+  renderClipper();
+});
+$('#clipper-link').addEventListener('click', e => { e.preventDefault(); toast('このボタンをブックマークバーにドラッグして登録してください'); });
+$('#clipper-copy').addEventListener('click', async () => {
+  const code = bookmarkletCode($('#clipper-mode').value);
+  try { await navigator.clipboard.writeText(code); toast('コードをコピーしました。ブックマークのアドレスに貼り付けてください'); }
+  catch { prompt('このコードをコピーしてください', code); }
+});
+renderClipper();
 
 /* ---------- 表示テーマ ---------- */
 const darkMQ = matchMedia('(prefers-color-scheme: dark)');

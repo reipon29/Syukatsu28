@@ -611,3 +611,7 @@ dialog > *, dialog form > * { min-width: 0; max-width: 100%; }
 .dl dd { min-width: 0; }
 .dl { grid-template-columns: 6.5em minmax(0, 1fr); }
 .btn-col, .funnel, .mini-list, .card-list, .mi-text, .bar-chart, .info-banner .ib-text { grid-template-columns: minmax(0, 1fr); }
+
+/* ============ ブックマークレット ============ */
+.clipper-steps { padding-left: 20px; margin-top: 12px; line-height: 1.7; }
+.clipper-steps li + li { margin-top: 2px; }
