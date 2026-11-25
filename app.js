@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '2.12.0';
+const APP_VERSION = '2.13.0';
 const STORAGE_KEY = 'syukatsu.v1';
 
 const STATUSES = [
@@ -545,17 +545,23 @@ function renderCompanies() {
       keyP.overtime != null && `残業 <b>${keyP.overtime}h</b>`,
     ].filter(Boolean) : [];
     return `<li class="card ${st.cls}" data-id="${c.id}">
-      <div class="card-top">
-        <span class="card-name">${esc(c.name)}</span>
-        ${tokyoBadge(c)}
-        <span class="chip ${st.cls}">${st.label}</span>
+      <div class="card-row">
+        ${avatar(c)}
+        <div class="card-main">
+          <div class="card-top">
+            <span class="card-name">${esc(c.name)}</span>
+            ${tokyoBadge(c)}
+            <span class="chip ${st.cls}">${st.label}</span>
+          </div>
+          <div class="card-sub">
+            <span class="stars-view">${stars(c.priority)}</span>
+            ${c.industry ? `<span>${esc(c.industry)}</span>` : ''}
+            ${rn ? `<span>経路: ${esc(rn)}</span>` : ''}
+            ${appliedText(c)}
+          </div>
+        </div>
       </div>
-      <div class="card-sub">
-        <span class="stars-view">${stars(c.priority)}</span>
-        ${c.industry ? `<span>${esc(c.industry)}</span>` : ''}
-        ${rn ? `<span>経路: ${esc(rn)}</span>` : ''}
-        ${appliedText(c)}
-      </div>
+      ${progressBar(c)}
       ${facts.length ? `<div class="card-facts">${facts.map(f => `<span>${f}</span>`).join('')}</div>` : ''}
       ${nextHtml}
     </li>`;
@@ -1879,19 +1885,20 @@ function renderDetail() {
   const tk = TOKYO[bestTokyo(c)];
 
   $('#detail-body').innerHTML = `
-    <div class="hero">
-      <h1 class="hero-name">${esc(c.name)}</h1>
-      <div class="hero-meta">
-        <span class="stars-view">${stars(c.priority)}</span>
-        ${c.industry ? `<span>${esc(c.industry)}</span>` : '<span>業界未設定</span>'}
-        ${rn ? `<span>経路: ${esc(rn)}</span>` : ''}
+    <div class="hero hero-color" style="--h:${hueOf(c)}">
+      <div class="hero-top">
+        ${avatar(c, 'lg')}
+        <div class="hero-titles">
+          <h1 class="hero-name">${esc(c.name)}</h1>
+          <div class="hero-meta">
+            <span class="stars-view">${stars(c.priority)}</span>
+            ${c.industry ? `<span>${esc(c.industry)}</span>` : '<span>業界未設定</span>'}
+            ${tokyoBadge(c)}
+            ${rn ? `<span>経路: ${esc(rn)}</span>` : ''}
+          </div>
+        </div>
       </div>
-      <div class="hero-row">
-        <span class="status-picker ${st.cls}"><select id="detail-status" aria-label="ステータスを変更">
-          ${STATUSES.map(s => `<option value="${s.id}" ${s.id === c.status ? 'selected' : ''}>${s.label}</option>`).join('')}
-        </select></span>
-        ${tokyoBadge(c)}
-      </div>
+      ${statusStepper(c)}
       ${loginActions(c)}
     </div>
 
@@ -1933,6 +1940,12 @@ function renderDetail() {
           .sort((a, b) => b.at - a.at).map(h => `<li><span class="tl-date">${fmtDay(h.at)}</span>${h.label}</li>`).join('')}
       </ul>
     </section>`;
+  // 段階表示：今の段階を真ん中に
+  requestAnimationFrame(() => {
+    const bar = $('#detail-body .stepper');
+    const now = bar?.querySelector('.step.now');
+    if (bar && now) bar.scrollLeft = now.offsetLeft - bar.offsetLeft - (bar.clientWidth - now.offsetWidth) / 2;
+  });
 }
 function setStatus(c, status) {
   if (c.status === status) return;
@@ -1962,6 +1975,7 @@ $('#detail-body').addEventListener('click', e => {
     case 'add-note': openNote(c.id, null); break;
     case 'edit-note': openNote(c.id, t.dataset.nid); break;
     case 'copy-cid': copyText(c.loginId, 'ID'); break;
+    case 'set-status': setStatus(c, t.dataset.st); break;
     case 'find-posting': startFindPosting(c); break;
     case 'copy-cpw': copyPassword(c.pwd); break;
     case 'copy-aid': copyText(acc?.loginId, 'ID'); break;
@@ -2106,6 +2120,10 @@ function renderHome() {
     { v: count(c => c.status === 'offer'), u: '社', l: '内定', go: 'offer' },
     { v: count(c => bestTokyo(c) === 'only' && ACTIVE_STATUSES.has(c.status)), u: '社', l: '東京◎', go: 'tokyo' },
   ];
+  const h = new Date().getHours();
+  const hello = h < 5 ? 'おつかれさまです' : h < 11 ? 'おはようございます' : h < 18 ? 'こんにちは' : 'こんばんは';
+  const todayN = todayItems().length;
+  $('#home-hello').innerHTML = `<b>${hello}</b><span>${todayN ? `今日やることが <em>${todayN}件</em> あります` : '今日やることはありません。いい調子です'}${week ? `・7日以内の予定 ${week}件` : ''}</span>`;
   $('#home-stats').innerHTML = stats.map(s => `<button class="stat" data-stat="${s.go}"><div class="sv">${s.v}<small>${s.u}</small></div><div class="sl">${s.l}</div></button>`).join('');
 
   const shown = [...overdue, ...upcoming.slice(0, 6)];
@@ -2581,6 +2599,47 @@ async function importPostingFromUrl(action) {
 $('#posting-find').addEventListener('click', () => importPostingFromUrl('find'));
 $('#posting-fetch').addEventListener('click', () => importPostingFromUrl('fetch'));
 
+/* ---------- 見た目の部品 ---------- */
+const HUES = [221, 262, 190, 152, 28, 200, 280, 170, 45, 320];
+/** 企業ごとの色（企業名から決める。一覧で見分けやすくするため） */
+function hueOf(c) {
+  const key = c.name.replace(/株式会社|\(株\)|（株）|㈱|\s/g, '');
+  let h = 2166136261; // FNV-1a（文字が少し違うだけでも色がばらけるように）
+  for (const ch of key) { h ^= ch.codePointAt(0); h = Math.imul(h, 16777619) >>> 0; }
+  return HUES[h % HUES.length];
+}
+/** 企業名の頭文字アイコン（「株式会社」などは飛ばす） */
+function avatar(c, size = '') {
+  const nm = c.name.replace(/^(?:株式会社|\(株\)|（株）|㈱)\s*/, '').trim() || c.name;
+  return `<span class="avatar ${size}" style="--h:${hueOf(c)}" aria-hidden="true">${esc([...nm][0] || '?')}</span>`;
+}
+const STAGES = [
+  { label: 'エントリー', ids: ['entry'] },
+  { label: '書類・テスト', ids: ['es', 'test', 'gd'] },
+  { label: '面接', ids: ['int1', 'int2', 'intf'] },
+  { label: '内定', ids: ['offer'] },
+];
+/** 一覧カードの進捗バー（エントリー → 書類・テスト → 面接 → 内定） */
+function progressBar(c) {
+  const i = STAGES.findIndex(s => s.ids.includes(c.status));
+  if (i < 0) return '';
+  return `<div class="prog" title="${STAGES[i].label}">${STAGES.map((s, j) => `<span class="${j < i ? 'done' : j === i ? 'now' : ''}"></span>`).join('')}</div>`;
+}
+/** 詳細のステータス：タップで変更できる段階表示 */
+function statusStepper(c) {
+  const flow = STATUSES.filter(s => !['declined', 'rejected'].includes(s.id));
+  const cur = flow.findIndex(s => s.id === c.status);
+  const ended = c.status === 'declined' || c.status === 'rejected';
+  return `<div class="stepper-wrap">
+    <div class="stepper ${ended ? 'ended' : ''}">${flow.map((s, i) => `<button type="button" class="step ${i < cur ? 'done' : i === cur ? 'now' : ''}" data-act="set-status" data-st="${s.id}">${s.label}</button>`).join('')}</div>
+    <div class="stepper-end">
+      ${ended ? `<span class="chip ${STATUS_MAP[c.status].cls}">${STATUS_MAP[c.status].label}</span>` : ''}
+      <button type="button" class="link small" data-act="set-status" data-st="declined">辞退した</button>
+      <button type="button" class="link small" data-act="set-status" data-st="rejected">お見送り</button>
+    </div>
+  </div>`;
+}
+
 /** 詳細画面：募集要項が空のときの案内 */
 function emptyPostingCta(c) {
   if (!gsyncConf().url) return '<p class="muted-empty">まだ入力されていません。「編集」から募集要項を貼り付けると自動で入力されます。</p>';
@@ -2698,8 +2757,9 @@ function renderToday() {
   const items = todayItems();
   $('#home-today-count').textContent = items.length ? `${items.length}件` : '';
   const ext = (href, label) => href ? `<a class="btn small" href="${esc(href)}" target="_blank" rel="noopener">${label}</a>` : '';
+  const KIND = { '📩': 'k-reply', '🎯': 'k-prep', '⏳': 'k-wait', '📅': 'k-noevent' };
   const row = (ico, title, sub, actions, open) => `
-    <div class="mini-item today-item"${open ? ` data-open="${open}"` : ''}>
+    <div class="mini-item today-item ${KIND[ico] || ''}"${open ? ` data-open="${open}"` : ''}>
       <span class="ti-ico" aria-hidden="true">${ico}</span>
       <div class="mi-main"><div class="mi-title">${title}</div><div class="mi-sub">${sub}</div></div>
       <div class="ti-actions">${actions}</div>
