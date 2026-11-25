@@ -155,6 +155,28 @@
           <label class="plain">学歴<select id="profile-degree"></select></label>
         </div>
       </div>
+      <div class="panel" id="gsync-panel">
+        <h2>📬 Gmailから自動で取り込む</h2>
+        <p class="note">Gmail に届いた採用メールから、企業・選考の進み具合・面接日・マイページのURL/IDを自動で登録します。自分の Google アカウントに専用のスクリプトを1回設置すると使えます（Gmail は読み取り専用。データは外部に送りません）。</p>
+        <label class="plain">同期用 URL
+          <input id="gsync-url" type="url" inputmode="url" autocomplete="off" placeholder="https://script.google.com/macros/s/…/exec?token=…">
+        </label>
+        <div class="btn-col" style="margin-top:10px">
+          <button id="gsync-run" type="button" class="btn primary">Gmailから同期</button>
+        </div>
+        <p class="note small" id="gsync-status"></p>
+        <details class="gsync-help">
+          <summary>設置のしかた（最初に1回・5分）</summary>
+          <ol class="note small clipper-steps">
+            <li>PC のブラウザで <a href="https://script.google.com/home/projects/create" target="_blank" rel="noopener">script.google.com</a> を開く（新しいプロジェクトが作られます）。左上の名前を「就活管理 Gmail同期」に変える</li>
+            <li><a href="gas/gmail-sync.gs" target="_blank" rel="noopener">スクリプト</a>を開いて全部コピーし、エディタの中身を全部消して貼り付け →  保存（💾）</li>
+            <li>左の ⚙️「プロジェクトの設定」→「appsscript.json マニフェスト ファイルをエディタで表示する」にチェック → エディタに戻って appsscript.json を開き、<a href="gas/appsscript.json" target="_blank" rel="noopener">この内容</a>に置き換えて保存</li>
+            <li>右上「デプロイ」→「新しいデプロイ」→ ⚙️ で「ウェブアプリ」を選ぶ → 次のユーザーとして実行「自分」、アクセスできるユーザー「全員」→「デプロイ」。Google のログインと許可の画面が出たら許可する（「このアプリは確認されていません」と出たら「詳細」→「（安全ではないページ）に移動」）</li>
+            <li>上の関数の選択で「setup」を選んで「実行」→ 下の実行ログに出た URL（…?token=…）をコピーして、この画面の「同期用 URL」に貼り付ける</li>
+          </ol>
+          <p class="note small">最初は過去8か月分を読むので、全部そろうまで数時間かかることがあります（1時間ごとに自動で続きを読みます）。同期用 URL を知っている人は企業名やマイページIDを見られるので、人に教えないでください。</p>
+        </details>
+      </div>
       <div class="panel" id="clipper-panel">
         <h2>📥 採用ページから取り込む（ブックマーク）</h2>
         <p class="note">募集要項・エントリー画面・マイページを開いた状態でこのブックマークを押すと、ページの文章を読み取って企業の登録画面に自動入力します。文字を選択してから押すと、選択した部分だけを読み取ります。</p>

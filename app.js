@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '2.8.0';
+const APP_VERSION = '2.9.0';
 const STORAGE_KEY = 'syukatsu.v1';
 
 const STATUSES = [
@@ -1090,6 +1090,7 @@ cDialog.addEventListener('cancel', e => { e.preventDefault(); tryCloseCompany();
 $('#delete-company').addEventListener('click', () => {
   if (!confirm(`「${editing.name}」を削除しますか？\n登録した予定やログイン情報も削除されます。`)) return;
   state.companies = state.companies.filter(c => c.id !== editing.id);
+  gsyncIgnore(editing); // Gmail同期で復活しないようにする
   save();
   cDialog.close();
   toast('削除しました');
@@ -2354,6 +2355,135 @@ $('#clipper-copy').addEventListener('click', async () => {
   catch { prompt('このコードをコピーしてください', code); }
 });
 renderClipper();
+
+/* ---------- Gmailから自動で取り込む（gas/gmail-sync.gs と連携） ---------- */
+const GSYNC_KEY = 'syukatsu.gsync';      // { url, at }
+const GSYNC_IGNORE_KEY = 'syukatsu.gsyncIgnore'; // 削除した企業（nameKey）
+const GSYNC_MEMO = '【Gmail同期】';
+const GSYNC_AUTO_MS = 3 * 3600e3;
+const gsyncConf = () => { try { return JSON.parse(localStorage.getItem(GSYNC_KEY) || '{}'); } catch { return {}; } };
+const gsyncSetConf = o => { try { localStorage.setItem(GSYNC_KEY, JSON.stringify({ ...gsyncConf(), ...o })); } catch { /* ignore */ } };
+function gsyncIgnored() { try { return new Set(JSON.parse(localStorage.getItem(GSYNC_IGNORE_KEY) || '[]')); } catch { return new Set(); } }
+function gsyncIgnore(c) {
+  const s = gsyncIgnored();
+  s.add(nameKey(c.name));
+  try { localStorage.setItem(GSYNC_IGNORE_KEY, JSON.stringify([...s])); } catch { /* ignore */ }
+}
+/** メモの【Gmail同期】より後ろを、新しい内容に置き換える（自分で書いた部分は残す） */
+function replaceGmailMemo(memo, block) {
+  const i = memo.indexOf(GSYNC_MEMO);
+  const own = (i >= 0 ? memo.slice(0, i) : memo).trimEnd();
+  return own ? `${own}\n\n${block}` : block;
+}
+/** 同期データを統合する。既存の企業は「空欄を埋める・予定を足す・ステータスを先に進める」だけ */
+function applyGmailSync(data) {
+  const rank = s => STATUSES.findIndex(x => x.id === s);
+  const ignored = gsyncIgnored();
+  const now = Date.now();
+  const report = { added: [], updated: [], advanced: [] };
+  for (const inc of Array.isArray(data.companies) ? data.companies : []) {
+    if (!inc || !inc.name) continue;
+    const key = nameKey(inc.name);
+    if (!key || ignored.has(key)) continue;
+    const events = (Array.isArray(inc.events) ? inc.events : []).filter(ev => ev && ev.title && /^\d{4}-\d{2}-\d{2}$/.test(ev.date));
+    const statusAt = Number(inc.statusAt) || now;
+    const cur = state.companies.find(c => c.id === inc.id) || state.companies.find(c => nameKey(c.name) === key);
+    if (!cur) {
+      const c = normalizeCompany({
+        id: inc.id, name: inc.name, status: inc.status, priority: inc.priority, url: inc.url, loginId: inc.loginId,
+        memo: inc.memo, events, createdAt: now, updatedAt: now,
+        history: STATUS_MAP[inc.status] && inc.status !== 'interest' ? [{ status: inc.status, at: statusAt }] : [],
+      });
+      if (!c.industry) c.industry = guessIndustries(c.name)[0]?.name || '';
+      state.companies.push(c);
+      report.added.push(c.name);
+      continue;
+    }
+    const before = JSON.stringify(cur);
+    if (!cur.url && inc.url) cur.url = str(inc.url);
+    if (!cur.loginId && inc.loginId) cur.loginId = str(inc.loginId);
+    for (const ev of events) {
+      if (cur.events.some(e => e.id === ev.id || (e.date === ev.date && e.title === ev.title))) continue;
+      cur.events.push(normalizeEvent(ev));
+    }
+    if (inc.memo) cur.memo = replaceGmailMemo(cur.memo, str(inc.memo));
+    // ステータス：自分で変更した日より新しいメールのときだけ、先に進める（お見送りも反映）
+    const lastSet = Math.max(cur.createdAt, ...cur.history.map(h => h.at));
+    const next = inc.status;
+    const canMove = STATUS_MAP[next] && statusAt > lastSet && !['offer', 'declined'].includes(cur.status);
+    const forward = rank(next) > rank(cur.status) && !['rejected', 'declined'].includes(next) && cur.status !== 'rejected';
+    const rejected = next === 'rejected' && IN_PROCESS.has(cur.status);
+    if (canMove && (forward || rejected)) {
+      cur.status = next;
+      cur.history.push({ status: next, at: statusAt });
+      report.advanced.push(`${cur.name}→${STATUS_MAP[next].label}`);
+    }
+    if (JSON.stringify(cur) !== before) { cur.updatedAt = now; report.updated.push(cur.name); }
+  }
+  return report;
+}
+let gsyncBusy = false;
+async function runGmailSync(manual) {
+  const url = gsyncConf().url;
+  if (!url) { if (manual) toast('先に同期用 URL を貼り付けてください'); return; }
+  if (gsyncBusy) return;
+  gsyncBusy = true;
+  const btn = $('#gsync-run');
+  btn.disabled = true;
+  btn.textContent = '同期中…（最大30秒ほど）';
+  try {
+    const res = await fetch(url, { cache: 'no-store', redirect: 'follow' });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error === 'unauthorized' ? 'URL のトークンが違います' : data.error);
+    if (data.source !== 'gmail-sync') throw new Error('同期用 URL ではないようです');
+    const r = applyGmailSync(data);
+    save();
+    render();
+    gsyncSetConf({ at: Date.now(), complete: Boolean(data.complete) });
+    const parts = [];
+    if (r.added.length) parts.push(`${r.added.length}社を追加`);
+    if (r.advanced.length) parts.push(`選考が進んだ企業：${r.advanced.slice(0, 3).join('、')}${r.advanced.length > 3 ? ' ほか' : ''}`);
+    if (r.updated.length - r.advanced.length > 0) parts.push(`${r.updated.length - r.advanced.length}社の予定・メモを更新`);
+    if (manual || parts.length) toast(parts.length ? `Gmail同期：${parts.join(' / ')}` : 'Gmail同期：新しい情報はありませんでした');
+  } catch (err) {
+    if (manual) alert('Gmailから同期できませんでした：' + err.message + '\n\n同期用 URL が正しいか、スクリプトのデプロイで「アクセスできるユーザー：全員」になっているか確認してください。');
+    else console.warn('gmail sync failed', err);
+  } finally {
+    gsyncBusy = false;
+    btn.disabled = false;
+    btn.textContent = 'Gmailから同期';
+    renderGsync();
+  }
+}
+function renderGsync() {
+  const conf = gsyncConf();
+  $('#gsync-url').value = conf.url || '';
+  $('#gsync-status').textContent = !conf.url ? '' : conf.at
+    ? `前回の同期：${new Date(conf.at).toLocaleString('ja-JP', { dateStyle: 'short', timeStyle: 'short' })}` +
+      (conf.complete === false ? '（過去のメールはまだ読み込み中。1時間ごとに増えていきます）' : '') +
+      ' ・アプリを開いたときにも自動で同期します'
+    : 'まだ同期していません';
+}
+$('#gsync-url').addEventListener('change', e => {
+  const v = e.target.value.trim();
+  if (v && !/^https:\/\/script\.google(?:usercontent)?\.com\/.+token=/.test(v)) {
+    alert('script.google.com の「…/exec?token=…」の URL を貼り付けてください（setup の実行ログに出ます）');
+    e.target.value = gsyncConf().url || '';
+    return;
+  }
+  gsyncSetConf({ url: v, at: null });
+  renderGsync();
+  if (v) runGmailSync(true);
+});
+$('#gsync-run').addEventListener('click', () => runGmailSync(true));
+renderGsync();
+// 開いたとき・アプリに戻ってきたときに、前回から3時間以上たっていれば自動で同期
+function gsyncAuto() {
+  const conf = gsyncConf();
+  if (conf.url && navigator.onLine && (!conf.at || Date.now() - conf.at > GSYNC_AUTO_MS)) runGmailSync(false);
+}
+setTimeout(gsyncAuto, 1500);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) gsyncAuto(); });
 
 /* ---------- 表示テーマ ---------- */
 const darkMQ = matchMedia('(prefers-color-scheme: dark)');

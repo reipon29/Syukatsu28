@@ -615,3 +615,7 @@ dialog > *, dialog form > * { min-width: 0; max-width: 100%; }
 /* ============ ブックマークレット ============ */
 .clipper-steps { padding-left: 20px; margin-top: 12px; line-height: 1.7; }
 .clipper-steps li + li { margin-top: 2px; }
+.gsync-help { margin-top: 10px; }
+.gsync-help summary { cursor: pointer; font-size: 13px; font-weight: 600; color: var(--accent); }
+.gsync-help a { color: var(--accent); }
+#gsync-url { width: 100%; }
