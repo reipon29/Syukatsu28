@@ -54,8 +54,16 @@ function setup() {
 /** アプリに貼り付ける URL を表示する（ウェブアプリとしてデプロイした後に実行） */
 function showAppUrl() {
   const token = PropertiesService.getScriptProperties().getProperty('token');
-  const url = ScriptApp.getService().getUrl();
-  if (!url) { console.log('まだデプロイされていません。「デプロイ」→「新しいデプロイ」→ 種類「ウェブアプリ」でデプロイしてから、もう一度 showAppUrl を実行してください。'); return; }
+  const url = ScriptApp.getService().getUrl() || '';
+  // エディタから実行すると「…/dev」（本人しか開けないテスト用 URL）が返ることがあるので、そのときは手順を案内する
+  if (!url || /\/dev$/.test(url)) {
+    console.log('▼ 次の2つをつなげた URL をアプリの「同期用 URL」に貼り付けてください（人に教えないでください）\n' +
+      '1.「デプロイ」→「デプロイを管理」の「ウェブアプリ」の URL（…/exec で終わるもの）\n' +
+      '2. その後ろに ?token=' + token + '\n' +
+      '例: https://script.google.com/macros/s/XXXX/exec?token=' + token + '\n' +
+      '※コードを変えたときは「デプロイを管理」→ ✏️ → バージョン「新バージョン」→「デプロイ」をしてください。');
+    return;
+  }
   console.log('▼ この URL をアプリの「Gmailから自動で取り込む」に貼り付けてください（人に教えないでください）\n' + url + '?token=' + token);
 }
 

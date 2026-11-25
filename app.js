@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '2.10.1';
+const APP_VERSION = '2.10.2';
 const STORAGE_KEY = 'syukatsu.v1';
 
 const STATUSES = [
@@ -2458,6 +2458,11 @@ function renderGsync() {
 }
 $('#gsync-url').addEventListener('change', e => {
   const v = e.target.value.trim();
+  if (v && /\/dev\?/.test(v)) {
+    alert('「…/dev?token=…」はテスト用の URL で、アプリからは読めません。\n「デプロイ」→「デプロイを管理」の「ウェブアプリ」の URL（…/exec で終わるもの）の後ろに ?token=… を付けて貼り付けてください。');
+    e.target.value = gsyncConf().url || '';
+    return;
+  }
   if (v && !/^https:\/\/script\.google(?:usercontent)?\.com\/.+token=/.test(v)) {
     alert('script.google.com の「…/exec?token=…」の URL を貼り付けてください（setup の実行ログに出ます）');
     e.target.value = gsyncConf().url || '';
