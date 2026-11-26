@@ -812,3 +812,71 @@ dialog > *, dialog form > * { min-width: 0; max-width: 100%; }
 .job-opt b { font-size: 15px; font-weight: 700; color: var(--text); }
 .job-list { padding: 2px; }
 .job-list:focus, .job-list:focus-visible { outline: none; }
+
+/* ============ 自分の条件・スコア（v2.15） ============ */
+.cond-chips { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; margin-left: 52px; }
+.cc { font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 6px; background: var(--surface-2); color: var(--muted); white-space: nowrap; }
+.cc.y { background: var(--green-soft); color: var(--green); }
+.cc.n { background: var(--danger-soft); color: var(--danger); }
+.cond-all { font-size: 11px; font-weight: 800; color: #fff; background: var(--green); padding: 2px 8px; border-radius: 6px; }
+@media (max-width: 380px) { .cond-chips { margin-left: 0; } }
+.seg-scroll button.match { color: var(--green); }
+.seg-scroll button.match.on { background: var(--green); border-color: var(--green); color: #fff; }
+.input-unit { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+.input-unit input { flex: 1; min-width: 0; }
+.input-unit span { flex: none; font-size: 13px; color: var(--muted); }
+.panel h2.mt { margin-top: 18px; }
+.weights { display: grid; gap: 8px; }
+.weight { display: grid; grid-template-columns: 7.5em 1fr 3em; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; }
+.weight input { width: 100%; accent-color: var(--accent); }
+.weight b { text-align: right; font-variant-numeric: tabular-nums; }
+.score-sec .dsec-head { align-items: baseline; }
+.score-big { font-size: 28px; font-weight: 800; color: var(--accent); font-variant-numeric: tabular-nums; }
+.score-big small { font-size: 13px; color: var(--muted); font-weight: 600; margin-left: 2px; }
+.cond-list { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 12px; }
+.cond-list .cc { font-size: 12px; padding: 4px 9px; }
+.axes { display: grid; gap: 10px; }
+.axis { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.axis-l { display: grid; min-width: 0; }
+.axis-l b { font-size: 14px; }
+.axis-l small { font-size: 11px; color: var(--muted); }
+.axis-dots { display: flex; gap: 6px; flex: none; }
+.dot { width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--border); background: var(--surface); cursor: pointer; padding: 0; }
+.dot.on { background: var(--accent); border-color: var(--accent); }
+.dot.on.auto { background: var(--accent-soft); border-color: var(--accent); }
+.rank-item { gap: 10px; }
+.rank-no { width: 20px; text-align: center; font-weight: 800; color: var(--muted); }
+.rank-item:nth-child(1) .rank-no { color: #d4a017; }
+.rank-item .avatar { width: 32px; height: 32px; font-size: 14px; border-radius: 10px; }
+.rank-bar { height: 6px; border-radius: 3px; background: var(--surface-2); margin-top: 5px; overflow: hidden; }
+.rank-bar span { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
+.rank-score { font-weight: 800; font-size: 18px; color: var(--accent); font-variant-numeric: tabular-nums; }
+.gcal-opts { margin-top: 10px; display: grid; gap: 4px; }
+
+/* ============ 月のカレンダー ============ */
+#sched-mode { max-width: 320px; }
+.month-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.month-head b { font-size: 17px; min-width: 7.5em; text-align: center; }
+.month-head .link { margin-left: auto; }
+.month-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 3px; background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 6px; box-shadow: var(--shadow); touch-action: pan-y; }
+.mwd { text-align: center; font-size: 11px; color: var(--muted); font-weight: 700; padding: 2px 0 4px; }
+.mwd.sun, .mday.sun .mnum { color: var(--danger); }
+.mwd.sat, .mday.sat .mnum { color: var(--accent); }
+.mday { min-height: 64px; border: none; background: none; border-radius: 10px; padding: 3px 2px; display: flex; flex-direction: column; align-items: stretch; gap: 2px; cursor: pointer; text-align: left; min-width: 0; color: var(--text); }
+.mday.out { opacity: .4; }
+.mday.sel { background: var(--accent-soft); }
+.mnum { font-size: 12px; font-weight: 700; text-align: center; line-height: 20px; }
+.mday.today .mnum { background: var(--accent); color: #fff !important; border-radius: 50%; width: 20px; height: 20px; margin: 0 auto; }
+.mchip { --h: 221; font-size: 9.5px; line-height: 1.3; padding: 1px 3px; border-radius: 4px; background: hsl(var(--h) 85% 92%); color: hsl(var(--h) 60% 30%); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
+.mchip.done { opacity: .5; text-decoration: line-through; }
+:root[data-theme=dark] .mchip { background: hsl(var(--h) 35% 25%); color: hsl(var(--h) 80% 85%); }
+.mmore { font-size: 9px; color: var(--muted); text-align: center; }
+.gdots { font-size: 10px; color: var(--muted); text-align: center; letter-spacing: 1px; line-height: 1; }
+.month-day { margin-top: 14px; }
+.month-day .day-head { display: flex; justify-content: space-between; align-items: center; }
+.mdot { --h: 221; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: hsl(var(--h) 65% 50%); margin-right: 6px; vertical-align: middle; }
+.gcal-item { opacity: .75; }
+.gcal-item .sched-title { font-weight: 600; }
+@media (min-width: 900px) { .mday { min-height: 92px; } .mchip { font-size: 11px; } }
+.dot.on.auto { background: var(--accent); opacity: .45; border-color: var(--accent); }
+.auto-tag { display: inline-block; font-size: 10px; font-weight: 700; color: var(--accent); background: var(--accent-soft); border-radius: 4px; padding: 0 5px; margin-right: 4px; }

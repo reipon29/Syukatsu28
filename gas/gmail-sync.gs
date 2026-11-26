@@ -80,13 +80,18 @@ function resetSync() {
 }
 
 /** アプリからの取得 */
-const SCRIPT_VERSION = 2;
+const SCRIPT_VERSION = 3;
 function doGet(e) {
   const p = (e && e.parameter) || {};
   if (p.action === 'version') return json_({ app: 'syukatsu-gas', version: SCRIPT_VERSION });
   const props = PropertiesService.getScriptProperties();
   const token = props.getProperty('token');
   if (!token || p.token !== token) return json_({ error: 'unauthorized' });
+  // Google カレンダーの予定を読む（アプリのカレンダー表示に重ねる）
+  if (p.action === 'gcal') {
+    try { return json_(listCalendar_(p.from, p.to)); }
+    catch (err) { return json_({ ok: false, error: String(err && err.message || err) }); }
+  }
   // 募集要項の取得（アプリの「URLから取り込む」「募集要項を探す」）
   if (p.action === 'fetch' || p.action === 'find') {
     try { return json_(p.action === 'fetch' ? fetchPosting_(p.url) : findPosting_(p.url)); }
@@ -617,4 +622,118 @@ function findRecruitSite_(body) {
     if (/recruit|saiyo|fresh|graduate|newgrad|shinsotsu|careers?\//i.test(u) || /採用(?:ホームページ|サイト|HP|情報|ページ)|新卒採用/.test(ctx)) return u;
   }
   return '';
+}
+
+
+/* ===================== Google カレンダー ===================== */
+// アプリの予定を、専用の「就活」カレンダーに登録・更新・削除する（ほかのカレンダーには書き込まない）
+
+/** アプリからの書き込み（POST） */
+function doPost(e) {
+  const props = PropertiesService.getScriptProperties();
+  const token = props.getProperty('token');
+  const p = (e && e.parameter) || {};
+  let body = {};
+  try { body = JSON.parse((e && e.postData && e.postData.contents) || '{}'); } catch (err) { /* 空のまま */ }
+  if (!token || (p.token || body.token) !== token) return json_({ error: 'unauthorized' });
+  try {
+    if (body.action === 'calendar') return json_(pushCalendar_(body.events || [], body.from, body.to));
+    return json_({ ok: false, error: 'unknown action' });
+  } catch (err) {
+    return json_({ ok: false, error: String(err && err.message || err) });
+  }
+}
+
+function syukatsuCalendar_() {
+  const props = PropertiesService.getScriptProperties();
+  const id = props.getProperty('calId');
+  let cal = id ? CalendarApp.getCalendarById(id) : null;
+  if (!cal) {
+    cal = CalendarApp.createCalendar('就活', { color: CalendarApp.Color.BLUE, summary: '就活管理アプリの予定（アプリから自動で登録されます）' });
+    props.setProperty('calId', cal.getId());
+  }
+  return cal;
+}
+function ymd_(s) {
+  const m = String(s || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) throw new Error('日付が正しくありません: ' + s);
+  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+}
+function withTime_(date, hm) {
+  const [h, mi] = String(hm).split(':').map(Number);
+  const d = new Date(date);
+  d.setHours(h, mi || 0, 0, 0);
+  return d;
+}
+/** 予定1件の開始・終了（時刻がなければ終日） */
+function eventTimes_(x) {
+  const day = ymd_(x.date);
+  if (!/^\d{1,2}:\d{2}$/.test(x.time || '')) return { allDay: true, start: day };
+  const start = withTime_(day, x.time);
+  let end = /^\d{1,2}:\d{2}$/.test(x.endTime || '') ? withTime_(day, x.endTime) : new Date(start.getTime() + 60 * 60 * 1000);
+  if (end <= start) end = new Date(start.getTime() + 60 * 60 * 1000);
+  return { allDay: false, start, end };
+}
+
+function pushCalendar_(events, from, to) {
+  const cal = syukatsuCalendar_();
+  const rangeStart = ymd_(from);
+  const rangeEnd = new Date(ymd_(to).getTime() + 86400000);
+  const existing = {};
+  cal.getEvents(rangeStart, rangeEnd).forEach(ev => {
+    const sid = ev.getTag('sid');
+    if (sid) existing[sid] = ev;
+  });
+  let created = 0, updated = 0, deleted = 0;
+  for (const x of events) {
+    if (!x || !x.id || !x.title || !x.date) continue;
+    const t = eventTimes_(x);
+    const desc = x.description || '';
+    const ev = existing[x.id];
+    delete existing[x.id];
+    if (ev) {
+      let changed = false;
+      if (ev.getTitle() !== x.title) { ev.setTitle(x.title); changed = true; }
+      if ((ev.getLocation() || '') !== (x.place || '')) { ev.setLocation(x.place || ''); changed = true; }
+      if ((ev.getDescription() || '') !== desc) { ev.setDescription(desc); changed = true; }
+      if (t.allDay) {
+        if (!ev.isAllDayEvent() || ev.getAllDayStartDate().getTime() !== t.start.getTime()) { ev.setAllDayDate(t.start); changed = true; }
+      } else if (ev.isAllDayEvent() || ev.getStartTime().getTime() !== t.start.getTime() || ev.getEndTime().getTime() !== t.end.getTime()) {
+        ev.setTime(t.start, t.end); changed = true;
+      }
+      if (changed) updated++;
+    } else {
+      const opt = { location: x.place || '', description: desc };
+      const nev = t.allDay ? cal.createAllDayEvent(x.title, t.start, opt) : cal.createEvent(x.title, t.start, t.end, opt);
+      nev.setTag('sid', x.id);
+      created++;
+    }
+  }
+  // アプリで消した予定（この期間でアプリにないもの）は消す
+  Object.values(existing).forEach(ev => { ev.deleteEvent(); deleted++; });
+  return { ok: true, created, updated, deleted, calendar: cal.getName() };
+}
+
+/** 自分の Google カレンダーの予定（「就活」カレンダー以外・表示しているカレンダー） */
+function listCalendar_(from, to) {
+  const start = ymd_(from);
+  const end = new Date(ymd_(to).getTime() + 86400000);
+  const ownId = PropertiesService.getScriptProperties().getProperty('calId');
+  const fmt = (d, f) => Utilities.formatDate(d, 'Asia/Tokyo', f);
+  const out = [];
+  CalendarApp.getAllCalendars().forEach(cal => {
+    if (cal.getId() === ownId || cal.isHidden()) return;
+    cal.getEvents(start, end).forEach(ev => {
+      if (out.length >= 400) return;
+      const allDay = ev.isAllDayEvent();
+      const s = allDay ? ev.getAllDayStartDate() : ev.getStartTime();
+      const e = allDay ? new Date(ev.getAllDayEndDate().getTime() - 86400000) : ev.getEndTime();
+      out.push({
+        title: ev.getTitle() || '（予定あり）', calendar: cal.getName(), allDay,
+        date: fmt(s, 'yyyy-MM-dd'), endDate: fmt(e, 'yyyy-MM-dd'),
+        time: allDay ? '' : fmt(s, 'HH:mm'), endTime: allDay ? '' : fmt(e, 'HH:mm'),
+      });
+    });
+  });
+  return { ok: true, events: out };
 }

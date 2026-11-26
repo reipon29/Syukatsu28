@@ -57,6 +57,10 @@
         <div class="panel-head"><h2>直近の予定・締切</h2><span><button class="link small" data-add-event="">＋ 追加</button><button class="link small" data-goto="schedule">すべて見る</button></span></div>
         <div id="home-events"></div>
       </div>
+      <div class="panel" id="home-rank-panel">
+        <div class="panel-head"><h2>志望度ランキング</h2><button class="link small" data-rank-all>すべて見る</button></div>
+        <div id="home-rank"></div>
+      </div>
       <div class="panel">
         <div class="panel-head"><h2>選考状況</h2></div>
         <div id="home-funnel" class="funnel"></div>
@@ -78,7 +82,8 @@
         <label>並び順
           <select id="sort">
             <option value="next">次の予定が近い順</option>
-            <option value="priority">志望度順</option>
+            <option value="score">志望度スコア順</option>
+            <option value="priority">志望度（★）順</option>
             <option value="updated">更新が新しい順</option>
             <option value="name">企業名順</option>
           </select>
@@ -109,6 +114,20 @@
           <button id="ics-btn" class="btn small" title="今後の予定をまとめてAppleカレンダーなどに追加します">カレンダーに一括追加</button>
           <button id="add-event-btn" class="btn small primary">＋ 予定を追加</button>
         </div>
+      </div>
+      <div class="seg" id="sched-mode">
+        <button type="button" data-m="month">カレンダー</button>
+        <button type="button" data-m="list">リスト</button>
+      </div>
+      <div id="month-view" hidden>
+        <div class="month-head">
+          <button type="button" class="btn small" data-mv="-1" aria-label="前の月">‹</button>
+          <b id="month-title"></b>
+          <button type="button" class="btn small" data-mv="1" aria-label="次の月">›</button>
+          <button type="button" class="link small" data-mv="0">今日</button>
+        </div>
+        <div class="month-grid" id="month-grid"></div>
+        <div class="month-day" id="month-day"></div>
       </div>
       <div id="schedule-list"></div>
       <p id="schedule-empty" class="empty" hidden>予定はありません。<br>「＋ 予定を追加」から登録できます。</p>
@@ -157,6 +176,23 @@
           <label class="plain">学歴<select id="profile-degree"></select></label>
         </div>
       </div>
+      <div class="panel" id="cond-panel">
+        <h2>🎯 自分の条件</h2>
+        <p class="note">企業ごとに条件を満たすか（✓・✗）を表示し、企業一覧で「条件クリア」だけに絞り込めます。</p>
+        <div class="grid2">
+          <label class="plain">初任給（月給）の下限
+            <span class="input-unit"><input id="cond-salary" type="number" inputmode="decimal" step="0.5" min="0" placeholder="30"><span>万円以上</span></span>
+          </label>
+          <label class="plain">年間休日の下限
+            <span class="input-unit"><input id="cond-holidays" type="number" inputmode="numeric" min="0" placeholder="125"><span>日以上</span></span>
+          </label>
+        </div>
+        <label class="check-inline"><input id="cond-tokyo" type="checkbox"> 東京勤務が必須</label>
+        <label class="check-inline"><input id="cond-housing" type="checkbox"> 家賃補助・社宅がほしい</label>
+        <h2 class="mt">⚖️ 志望度スコアの重み</h2>
+        <p class="note">4つの軸を何%ずつ重視するか。合計が100%でなくても、比率で計算します。</p>
+        <div class="weights" id="weights"></div>
+      </div>
       <div class="panel" id="gsync-panel">
         <h2>📬 Gmailから自動で取り込む</h2>
         <p class="note">Gmail に届いた採用メールから、企業・選考の進み具合・面接日・マイページのURL/IDを自動で登録します。自分の Google アカウントに専用のスクリプトを1回設置すると使えます（Gmail は読み取り専用。データは外部に送りません）。</p>
@@ -167,6 +203,11 @@
           <button id="gsync-run" type="button" class="btn primary">Gmailから同期</button>
         </div>
         <p class="note small" id="gsync-status"></p>
+        <div class="gcal-opts" id="gcal-opts">
+          <label class="check-inline"><input id="gcal-push" type="checkbox"> アプリの予定を Google カレンダーに自動で登録（「就活」カレンダー）</label>
+          <label class="check-inline"><input id="gcal-show" type="checkbox"> Google カレンダーの予定もアプリのカレンダーに表示</label>
+          <p class="note small" id="gcal-status"></p>
+        </div>
         <details class="gsync-help">
           <summary>設置のしかた（最初に1回・5分）</summary>
           <ol class="note small clipper-steps">

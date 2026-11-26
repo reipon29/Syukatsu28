@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '2.14.0';
+const APP_VERSION = '2.15.0';
 const STORAGE_KEY = 'syukatsu.v1';
 
 const STATUSES = [
@@ -43,6 +43,12 @@ const METRICS = [
   { key: 'holidays', label: '年間休日',        unit: '日',   better: 'high', fmt: v => v + '日' },
   { key: 'overtime', label: '月平均残業',      unit: '時間', better: 'low',  fmt: v => v + '時間' },
   { key: 'hiring',   label: '採用予定人数',    unit: '人',   better: 'high', fmt: v => v.toLocaleString('ja-JP') + '人' },
+];
+// 比較画面だけで使う項目（初任給＋家賃補助の手取りの目安）
+const NET_RATE = 0.8; // 手取りの目安（額面の約8割）
+const CMP_METRICS = [
+  { key: 'net', label: '実質の月収（手取り目安）', unit: '円', better: 'high', fmt: v => v.toLocaleString('ja-JP') + '円' },
+  ...METRICS,
 ];
 const roundFor = (m, v) => (['bonus', 'overtime'].includes(m.key) ? Math.round(v * 10) / 10 : Math.round(v));
 const POSTING_TEXT = ['title', 'location', 'job', 'recruiter', 'eligibility', 'startDate', 'contract', 'probation', 'hours', 'holidaysNote',
@@ -129,6 +135,10 @@ function normalizeCompany(c) {
     createdAt: Number(c.createdAt) || Date.now(),
     updatedAt: Number(c.updatedAt) || Date.now(),
     triagedAt: Number(c.triagedAt) || 0, // 志望度の仕分けをした日時（0 = まだ）
+    scores: Object.fromEntries(['money', 'life', 'skill', 'future'].map(k => {
+      const v = Number(c.scores?.[k]);
+      return [k, v >= 1 && v <= 5 ? v : 0]; // 0 = 未設定（お金・生活は自動）
+    })),
   };
 }
 function normalizeNote(n) {
@@ -166,9 +176,14 @@ function normalizeState(d) {
 function normalizeProfile(p) {
   p = p && typeof p === 'object' ? p : {};
   const y = Number(p.gradYear);
+  const c = p.cond && typeof p.cond === 'object' ? p.cond : {};
+  const w = p.weights && typeof p.weights === 'object' ? p.weights : {};
+  const num = (v, d) => (Number.isFinite(Number(v)) && v !== '' && v != null ? Number(v) : d);
   return {
     gradYear: y >= 2020 && y <= 2040 ? y : 2028,
     degree: ['master', 'doctor', 'bachelor', 'junior'].includes(p.degree) ? p.degree : 'master',
+    cond: { salary: num(c.salary, 300000), holidays: num(c.holidays, 125), tokyo: c.tokyo !== false, housing: c.housing !== false },
+    weights: { money: num(w.money, 40), life: num(w.life, 25), skill: num(w.skill, 20), future: num(w.future, 15) },
   };
 }
 
@@ -186,6 +201,7 @@ function save() {
   } catch (e) {
     alert('保存に失敗しました: ' + e.message);
   }
+  if (typeof scheduleCalPush === 'function') scheduleCalPush();
 }
 
 /* ---------- helpers ---------- */
@@ -410,10 +426,10 @@ document.addEventListener('click', e => {
 /* ---------- filters ---------- */
 const filterSel = $('#filter-status');
 filterSel.innerHTML =
-  '<option value="active">選考中のみ</option><option value="all">すべて</option>' +
+  '<option value="active">選考中のみ</option><option value="all">すべて</option><option value="match">条件クリア</option>' +
   STATUSES.map(s => `<option value="${s.id}">${s.label}</option>`).join('');
 $('#status-select').innerHTML = STATUSES.map(s => `<option value="${s.id}">${s.label}</option>`).join('');
-$('#cmp-metric').innerHTML = METRICS.map(m => `<option value="${m.key}">${m.label}</option>`).join('');
+$('#cmp-metric').innerHTML = CMP_METRICS.map(m => `<option value="${m.key}">${m.label}</option>`).join('');
 
 function fillRouteFilter() {
   const sel = $('#filter-route');
@@ -499,6 +515,7 @@ function renderCompanies() {
   $('#summary').innerHTML =
     `<button data-f="active" class="${f === 'active' ? 'on' : ''}">進行中<b>${activeCount}</b></button>` +
     `<button data-f="all" class="${f === 'all' ? 'on' : ''}">すべて<b>${state.companies.length}</b></button>` +
+    `<button data-f="match" class="match ${f === 'match' ? 'on' : ''}">✓ 条件クリア<b>${state.companies.filter(c => ACTIVE_STATUSES.has(c.status) && condStatus(c) === 'ok').length}</b></button>` +
     STATUSES.filter(s => counts[s.id]).map(s =>
       `<button data-f="${s.id}" class="${f === s.id ? 'on' : ''}">${s.label}<b>${counts[s.id]}</b></button>`).join('');
   const nFilters = [ft !== 'all', fi !== 'all', fr !== 'all'].filter(Boolean).length;
@@ -506,8 +523,9 @@ function renderCompanies() {
   $('#filter-count').textContent = nFilters;
 
   const list = state.companies.filter(c => {
-    if (f === 'active' && !ACTIVE_STATUSES.has(c.status)) return false;
-    if (f !== 'active' && f !== 'all' && c.status !== f) return false;
+    if ((f === 'active' || f === 'match') && !ACTIVE_STATUSES.has(c.status)) return false;
+    if (f === 'match' && condStatus(c) !== 'ok') return false;
+    if (!['active', 'all', 'match'].includes(f) && c.status !== f) return false;
     if (!matchTokyo(c, ft)) return false;
     if (fr !== 'all' && c.route !== fr) return false;
     if (!matchIndustry(c, fi)) return false;
@@ -519,6 +537,7 @@ function renderCompanies() {
   const sorters = {
     next: (a, b) => nextKey(a).localeCompare(nextKey(b)) || b.priority - a.priority,
     priority: (a, b) => b.priority - a.priority || nextKey(a).localeCompare(nextKey(b)),
+    score: (a, b) => (totalScore(b)?.total ?? -1) - (totalScore(a)?.total ?? -1) || b.priority - a.priority,
     updated: (a, b) => b.updatedAt - a.updatedAt,
     name: (a, b) => a.name.localeCompare(b.name, 'ja'),
   };
@@ -562,6 +581,7 @@ function renderCompanies() {
         </div>
       </div>
       ${progressBar(c)}
+      ${condChips(c)}
       ${facts.length ? `<div class="card-facts">${facts.map(f => `<span>${f}</span>`).join('')}</div>` : ''}
       ${nextHtml}
     </li>`;
@@ -588,6 +608,12 @@ $('#company-list').addEventListener('click', e => {
 });
 
 function renderSchedule() {
+  const mode = schedMode();
+  $$('#sched-mode button').forEach(b => b.classList.toggle('on', b.dataset.m === mode));
+  $('#month-view').hidden = mode !== 'month';
+  $('#schedule-list').hidden = mode === 'month';
+  $('#show-done').closest('label').style.visibility = mode === 'month' ? 'hidden' : '';
+  if (mode === 'month') { $('#schedule-empty').hidden = true; renderMonth(); return; }
   const showAll = $('#show-done').checked;
   const today = todayStr();
   const items = [];
@@ -666,8 +692,8 @@ const rowText = r => r.c.name + (r.title ? `（${r.title}）` : '');
 function renderCompare() {
   renderBulkBanner();
   fillIndustryFilters();
-  const metric = METRICS.find(m => m.key === $('#cmp-metric').value) || METRICS[0];
-  const rows = compareTargets();
+  const metric = CMP_METRICS.find(m => m.key === $('#cmp-metric').value) || CMP_METRICS[0];
+  const rows = compareTargets().map(r => ({ ...r, p: { ...r.p, net: netMonthly(r.p) } }));
   const hasAny = rows.length > 0;
 
   $('#cmp-empty').hidden = hasAny;
@@ -702,16 +728,16 @@ function renderCompare() {
   // 一覧表（各列でいちばん良い値を強調）
   const sorted = [...rows].sort(cmp);
   const best = {};
-  METRICS.forEach(m => {
+  CMP_METRICS.forEach(m => {
     const vals = sorted.map(r => r.p[m.key]).filter(v => v != null);
     if (vals.length >= 2) best[m.key] = m.better === 'low' ? Math.min(...vals) : Math.max(...vals);
   });
   $('#cmp-table').innerHTML =
-    `<thead><tr><th>企業／職種</th><th>東京</th>${METRICS.map(m => `<th>${m.label}</th>`).join('')}<th>働き方</th><th>勤務地</th><th>本社</th></tr></thead>
+    `<thead><tr><th>企業／職種</th><th>東京</th>${CMP_METRICS.map(m => `<th>${m.label}</th>`).join('')}<th>働き方</th><th>勤務地</th><th>本社</th></tr></thead>
     <tbody>${sorted.map(r => `<tr data-id="${r.c.id}" data-pid="${r.p.id}">
       <td>${rowLabel(r)}</td>
       <td class="l">${TOKYO[r.tk]?.badge || '-'}</td>
-      ${METRICS.map(m => {
+      ${CMP_METRICS.map(m => {
         const v = r.p[m.key];
         return `<td class="${v != null && v === best[m.key] ? 'best' : ''}">${v == null ? '-' : esc(m.fmt(v))}</td>`;
       }).join('')}
@@ -793,6 +819,7 @@ function renderMore() {
   $('#version').textContent = 'バージョン ' + APP_VERSION;
   $('#profile-year').value = state.profile.gradYear;
   $('#profile-degree').value = state.profile.degree;
+  renderCondSettings();
 }
 (() => {
   const y = new Date().getFullYear();
@@ -801,7 +828,7 @@ function renderMore() {
   $('#profile-degree').innerHTML = Object.entries(DEGREES).map(([k, d]) => `<option value="${k}">${d.label}</option>`).join('');
 })();
 ['#profile-year', '#profile-degree'].forEach(sel => $(sel).addEventListener('change', () => {
-  state.profile = normalizeProfile({ gradYear: $('#profile-year').value, degree: $('#profile-degree').value });
+  state.profile = normalizeProfile({ ...state.profile, gradYear: $('#profile-year').value, degree: $('#profile-degree').value });
   save();
   toast('保存しました');
 }));
@@ -1933,6 +1960,8 @@ function renderDetail() {
       ${loginActions(c)}
     </div>
 
+    ${scoreSection(c)}
+
     <section class="dsec">
       <div class="dsec-head"><h3>予定・締切</h3><button class="btn small" data-act="add-event">＋ 追加</button></div>
       ${openEvs.map(evRow).join('') || '<p class="muted-empty">今後の予定はありません。「＋ 追加」から面接日や締切を登録できます。</p>'}
@@ -2007,6 +2036,7 @@ $('#detail-body').addEventListener('click', e => {
     case 'edit-note': openNote(c.id, t.dataset.nid); break;
     case 'copy-cid': copyText(c.loginId, 'ID'); break;
     case 'set-status': setStatus(c, t.dataset.st); break;
+    case 'set-score': setScore(c, t.dataset.k, Number(t.dataset.v)); break;
     case 'find-posting': startFindPosting(c); break;
     case 'copy-cpw': copyPassword(c.pwd); break;
     case 'copy-aid': copyText(acc?.loginId, 'ID'); break;
@@ -2170,6 +2200,7 @@ function renderHome() {
 
   renderTriageBanner();
   renderToday();
+  renderRanking();
 
   const counts = STATUSES.map(s => ({ s, n: count(c => c.status === s.id) })).filter(x => x.n);
   const max = Math.max(...counts.map(x => x.n), 1);
@@ -2182,6 +2213,7 @@ function renderHome() {
 }
 $('#view-home').addEventListener('click', e => {
   if (e.target.closest('[data-start-triage]')) { openTriage(); return; }
+  if (e.target.closest('[data-rank-all]')) { $('#sort').value = 'score'; filterSel.value = 'active'; saveUiPref(); showView('companies'); return; }
   if (e.target.closest('[data-today-all]')) { $('#home-today').dataset.all = '1'; renderToday(); return; }
   const rd = e.target.closest('[data-reply-done]');
   if (rd) { markReplyDone(rd.dataset.replyDone); return; }
@@ -2629,6 +2661,369 @@ async function importPostingFromUrl(action) {
 }
 $('#posting-find').addEventListener('click', () => importPostingFromUrl('find'));
 $('#posting-fetch').addEventListener('click', () => importPostingFromUrl('fetch'));
+
+/* ---------- 自分の条件・実質の月収・志望度スコア ---------- */
+/** その企業の代表の職種（応募した職種 → 初任給が分かる職種 → 何か入っている職種） */
+function keyPosting(c) {
+  return c.postings.find(p => p.applied && postingHasData(p)) || c.postings.find(p => p.salary != null) || c.postings.find(postingHasData) || null;
+}
+/** 家賃補助：yes（手当・社宅あり）/ dorm（寮だけ）/ ''（不明） */
+function housingLevel(c, p) {
+  if (p && p.housing > 0) return 'yes';
+  const t = [p?.benefits, p?.allowances, p?.salaryNote, p?.note, p?.raw?.slice(0, 20000)].filter(Boolean).join('\n');
+  if (/住宅手当|家賃補助|住宅補助|住居手当|家賃手当|借上社宅|借り上げ社宅|社宅/.test(t)) return 'yes';
+  if (/独身寮|社員寮|寮/.test(t)) return 'dorm';
+  return '';
+}
+/** 初任給＋家賃補助の手取りの目安（円） */
+function netMonthly(p) {
+  if (!p) return null;
+  const base = p.salary ?? (p.annual != null ? Math.round(p.annual * 10000 / 16) : null);
+  if (base == null) return null;
+  return Math.round((base + (p.housing || 0)) * NET_RATE / 1000) * 1000;
+}
+/** 条件ごとの判定（true=満たす / false=満たさない / null=不明・一部） */
+function condChecks(c) {
+  const cond = state.profile.cond;
+  const p = keyPosting(c);
+  const out = [];
+  if (cond.salary > 0) {
+    const v = p?.salary ?? null;
+    out.push({ k: 'salary', label: '給', name: '初任給', ok: v == null ? null : v >= cond.salary, text: v == null ? '不明' : `${Math.round(v / 1000) / 10}万円` });
+  }
+  if (cond.holidays > 0) {
+    const v = p?.holidays ?? null;
+    out.push({ k: 'holidays', label: '休', name: '年間休日', ok: v == null ? null : v >= cond.holidays, text: v == null ? '不明' : `${v}日` });
+  }
+  if (cond.tokyo) {
+    const t = bestTokyo(c);
+    out.push({ k: 'tokyo', label: '東', name: '東京勤務', ok: t === 'only' ? true : t === 'no' ? false : null, text: TOKYO[t]?.label || '不明' });
+  }
+  if (cond.housing) {
+    const h = housingLevel(c, p);
+    out.push({ k: 'housing', label: '住', name: '家賃補助', ok: h === 'yes' ? true : null, text: h === 'yes' ? (p?.housing ? `${(p.housing / 10000).toFixed(1)}万円` : 'あり') : h === 'dorm' ? '寮のみ' : '不明' });
+  }
+  return out;
+}
+function condStatus(c) {
+  const ch = condChecks(c);
+  if (!ch.length) return '';
+  if (ch.some(x => x.ok === false)) return 'ng';
+  return ch.every(x => x.ok === true) ? 'ok' : 'unknown';
+}
+function condChips(c) {
+  if (!keyPosting(c) && !bestTokyo(c)) return '';
+  const ch = condChecks(c);
+  if (!ch.length) return '';
+  const st = condStatus(c);
+  return `<div class="cond-chips ${st}">${st === 'ok' ? '<span class="cond-all">✓ 条件クリア</span>' : ''}${ch.map(x =>
+    `<span class="cc ${x.ok === true ? 'y' : x.ok === false ? 'n' : 'q'}" title="${esc(x.name)}：${esc(x.text)}">${x.label}${x.ok === true ? '✓' : x.ok === false ? '✗' : '?'}</span>`).join('')}</div>`;
+}
+
+const AXES = [
+  { k: 'money', label: 'お金', hint: '初任給＋家賃補助' },
+  { k: 'life', label: '生活', hint: '休日・東京勤務・残業・リモート' },
+  { k: 'skill', label: '得意が活きる', hint: 'Web開発などの得意を評価してくれるか' },
+  { k: 'future', label: '将来の選択肢', hint: '転職でも通用する経験・会社の安定性' },
+];
+const clamp5 = v => Math.max(1, Math.min(5, Math.round(v)));
+/** お金・生活の自動の点数（募集要項がなければ 0） */
+function autoScores(c) {
+  const p = keyPosting(c);
+  const cond = state.profile.cond;
+  const out = { money: 0, life: 0 };
+  if (p && (p.salary != null || p.annual != null)) {
+    const base = (p.salary ?? Math.round(p.annual * 10000 / 16)) + (p.housing || 0);
+    const target = cond.salary || 300000;
+    const d = base - target;
+    let s = d < -40000 ? 1 : d < -15000 ? 2 : d < 0 ? 3 : d < 30000 ? 4 : 5;
+    if (!p.housing && housingLevel(c, p) === 'yes' && s < 5) s += 0.5; // 金額は不明だが補助あり
+    out.money = clamp5(s);
+  }
+  const tk = bestTokyo(c);
+  if (p || tk) {
+    let s = 3;
+    const hol = p?.holidays;
+    if (hol != null) s += hol >= (cond.holidays || 125) ? 1 : hol < (cond.holidays || 125) - 5 ? -1 : 0;
+    if (tk === 'only') s += 1; else if (tk === 'no') s -= 2;
+    if (p?.overtime != null) s += p.overtime <= 20 ? 0.5 : p.overtime > 40 ? -1 : 0;
+    if (p?.remote || p?.flex) s += 0.5;
+    out.life = clamp5(s);
+  }
+  return out;
+}
+/** 志望度スコア（0〜100）。軸がひとつも分からなければ null */
+function totalScore(c) {
+  const auto = autoScores(c);
+  const w = state.profile.weights;
+  const vals = {};
+  let known = 0;
+  AXES.forEach(({ k }) => {
+    const v = c.scores[k] || auto[k] || 0;
+    vals[k] = v;
+    if (v) known++;
+  });
+  if (!known) return null;
+  let sum = 0, wsum = 0;
+  AXES.forEach(({ k }) => { const wk = Math.max(0, w[k] || 0); sum += wk * (vals[k] || 3) / 5; wsum += wk; });
+  return { total: wsum ? Math.round(sum / wsum * 100) : 0, vals, auto, known };
+}
+function scoreSection(c) {
+  const sc = totalScore(c);
+  const ch = condChecks(c);
+  const rows = AXES.map(({ k, label, hint }) => {
+    const manual = c.scores[k];
+    const v = manual || sc?.auto[k] || 0;
+    const isAuto = !manual && sc?.auto[k];
+    return `<div class="axis">
+      <div class="axis-l"><b>${label}</b><small>${isAuto ? '<span class="auto-tag">自動</span>' : ''}${hint}</small></div>
+      <div class="axis-dots">${[1, 2, 3, 4, 5].map(n => `<button type="button" class="dot ${n <= v ? 'on' : ''} ${isAuto ? 'auto' : ''}" data-act="set-score" data-k="${k}" data-v="${n}" aria-label="${label} ${n}"></button>`).join('')}</div>
+    </div>`;
+  }).join('');
+  return `<section class="dsec score-sec">
+    <div class="dsec-head"><h3>志望度スコア</h3><span class="score-big">${sc ? sc.total : '–'}<small>/100</small></span></div>
+    ${ch.length ? `<div class="cond-list">${ch.map(x => `<span class="cc ${x.ok === true ? 'y' : x.ok === false ? 'n' : 'q'}">${x.name}：${esc(x.text)}${x.ok === true ? ' ✓' : x.ok === false ? ' ✗' : ''}</span>`).join('')}</div>` : ''}
+    <div class="axes">${rows}</div>
+    <p class="note small">● をタップして点数を付けます（同じ点をもう一度タップで取り消し）。重みは「その他 → 自分の条件」で変えられます。</p>
+  </section>`;
+}
+function setScore(c, k, v) {
+  c.scores[k] = c.scores[k] === v ? 0 : v;
+  c.updatedAt = Date.now();
+  save();
+  renderDetail();
+  render();
+}
+function renderRanking() {
+  const list = state.companies.filter(c => ACTIVE_STATUSES.has(c.status))
+    .map(c => ({ c, s: totalScore(c) })).filter(x => x.s)
+    .sort((a, b) => b.s.total - a.s.total || b.c.priority - a.c.priority);
+  $('#home-rank-panel').hidden = !list.length;
+  $('#home-rank').innerHTML = `<div class="mini-list">${list.slice(0, 5).map(({ c, s }, i) => `
+    <div class="mini-item rank-item" data-open="${c.id}">
+      <span class="rank-no">${i + 1}</span>
+      ${avatar(c)}
+      <div class="mi-main"><div class="mi-title">${esc(c.name)}</div>
+        <div class="rank-bar"><span style="width:${s.total}%"></span></div></div>
+      <span class="rank-score">${s.total}</span>
+    </div>`).join('')}</div>${list.length < 3 ? '<p class="note small">企業の詳細で「得意が活きる」「将来の選択肢」を付けると、ランキングに入ります。</p>' : ''}`;
+}
+function renderCondSettings() {
+  const { cond, weights } = state.profile;
+  $('#cond-salary').value = cond.salary ? cond.salary / 10000 : '';
+  $('#cond-holidays').value = cond.holidays || '';
+  $('#cond-tokyo').checked = cond.tokyo;
+  $('#cond-housing').checked = cond.housing;
+  $('#weights').innerHTML = AXES.map(({ k, label }) => `<label class="weight"><span>${label}</span>
+    <input type="range" min="0" max="60" step="5" data-w="${k}" value="${weights[k]}"><b>${weights[k]}%</b></label>`).join('');
+}
+function saveCond() {
+  const yen = parseFloat($('#cond-salary').value);
+  state.profile = normalizeProfile({ ...state.profile, cond: {
+    salary: Number.isFinite(yen) ? Math.round(yen * 10000) : 0,
+    holidays: parseInt($('#cond-holidays').value, 10) || 0,
+    tokyo: $('#cond-tokyo').checked, housing: $('#cond-housing').checked,
+  } });
+  save();
+}
+['#cond-salary', '#cond-holidays', '#cond-tokyo', '#cond-housing'].forEach(s => $(s).addEventListener('change', () => { saveCond(); toast('条件を保存しました'); }));
+$('#weights').addEventListener('input', e => {
+  const r = e.target.closest('[data-w]');
+  if (!r) return;
+  r.nextElementSibling.textContent = r.value + '%';
+});
+$('#weights').addEventListener('change', e => {
+  const r = e.target.closest('[data-w]');
+  if (!r) return;
+  state.profile.weights[r.dataset.w] = Number(r.value);
+  save();
+  toast('重みを保存しました');
+});
+
+/* ---------- Google カレンダー ---------- */
+// 予定を保存したら数秒待ってから、まとめて「就活」カレンダーに反映する
+var calTimer = null;
+var calBusy = false;
+var CAL_HASH_KEY = 'syukatsu.calHash';
+function calRange() {
+  const d = n => { const x = new Date(); x.setDate(x.getDate() + n); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`; };
+  return { from: d(-60), to: d(400) };
+}
+function calPayload() {
+  const { from, to } = calRange();
+  const events = [];
+  state.companies.forEach(c => c.events.forEach(ev => {
+    if (ev.date < from || ev.date > to) return;
+    events.push({ id: `${c.id}_${ev.id}`, title: `${ev.title}（${c.name}）`, date: ev.date, time: ev.time, endTime: ev.endTime, place: ev.place,
+      description: `${c.name}・${STATUS_MAP[c.status].label}\n就活管理アプリから自動で登録された予定です。` });
+  }));
+  return { from, to, events };
+}
+function scheduleCalPush() {
+  try {
+    if (!gsyncConf().url || !gsyncConf().calPush) return;
+    clearTimeout(calTimer);
+    calTimer = setTimeout(() => pushCalendar(false), 4000);
+  } catch { /* 起動中は何もしない */ }
+}
+async function pushCalendar(manual) {
+  const conf = gsyncConf();
+  if (!conf.url || calBusy) return;
+  const body = calPayload();
+  const hash = JSON.stringify(body.events);
+  if (!manual && localStorage.getItem(CAL_HASH_KEY) === hash) return;
+  calBusy = true;
+  try {
+    const res = await fetch(conf.url, { method: 'POST', body: JSON.stringify({ action: 'calendar', ...body }) });
+    const data = await res.json();
+    if (data.error === 'unauthorized') throw new Error('同期用 URL のトークンが違います');
+    if (!data.ok) throw new Error(data.error === 'unknown action' || !data.error ? 'Google のスクリプトが古いままです。最新のスクリプトを貼り付けて「新バージョン」でデプロイしてください' : data.error);
+    try { localStorage.setItem(CAL_HASH_KEY, hash); } catch { /* ignore */ }
+    gsyncSetConf({ calAt: Date.now() });
+    const msg = `Googleカレンダー「${data.calendar}」に反映しました（追加${data.created}・変更${data.updated}・削除${data.deleted}）`;
+    if (manual || data.created || data.deleted) toast(msg);
+  } catch (err) {
+    const m = String(err.message || err);
+    if (manual) alert('Google カレンダーに登録できませんでした：' + (m === 'Failed to fetch' || m === 'Load failed' ? 'Google のスクリプトが古いか、カレンダーの許可が済んでいません。最新のスクリプトで setup を実行し、「新バージョン」でデプロイしてください' : m));
+    else console.warn('calendar push failed', err);
+  } finally {
+    calBusy = false;
+    renderGcalOpts();
+  }
+}
+function renderGcalOpts() {
+  const conf = gsyncConf();
+  $('#gcal-opts').hidden = !conf.url;
+  $('#gcal-push').checked = Boolean(conf.calPush);
+  $('#gcal-show').checked = Boolean(conf.calShow);
+  $('#gcal-status').textContent = conf.calPush && conf.calAt
+    ? `前回の登録：${new Date(conf.calAt).toLocaleString('ja-JP', { dateStyle: 'short', timeStyle: 'short' })}（予定を保存すると自動で反映されます）` : '';
+}
+$('#gcal-push').addEventListener('change', e => {
+  gsyncSetConf({ calPush: e.target.checked });
+  if (e.target.checked) pushCalendar(true);
+  renderGcalOpts();
+});
+$('#gcal-show').addEventListener('change', e => {
+  gsyncSetConf({ calShow: e.target.checked });
+  gcalCache.clear();
+  renderGcalOpts();
+});
+renderGcalOpts();
+
+/* ---------- 予定：月のカレンダー ---------- */
+const SCHED_MODE_KEY = 'syukatsu.schedMode';
+const schedMode = () => localStorage.getItem(SCHED_MODE_KEY) || 'month';
+let monthCursor = (() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); })();
+let monthSel = todayStr();
+const gcalCache = new Map(); // 'YYYY-MM' → events[] | 'loading' | 'error'
+const ymdOf = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+function gcalFor(start, end) {
+  const conf = gsyncConf();
+  if (!conf.url || !conf.calShow) return [];
+  const key = ymdOf(start).slice(0, 7);
+  const hit = gcalCache.get(key);
+  if (Array.isArray(hit)) return hit;
+  if (hit) return [];
+  gcalCache.set(key, 'loading');
+  fetch(`${conf.url}&action=gcal&from=${ymdOf(start)}&to=${ymdOf(end)}`, { cache: 'no-store' })
+    .then(r => r.json()).then(d => {
+      if (!d.ok) throw new Error(d.error || 'error');
+      gcalCache.set(key, d.events || []);
+      if (currentView === 'schedule' && schedMode() === 'month') renderMonth();
+    }).catch(err => { gcalCache.set(key, 'error'); console.warn('gcal', err); });
+  return [];
+}
+function renderMonth() {
+  const y = monthCursor.getFullYear(), m = monthCursor.getMonth();
+  $('#month-title').textContent = `${y}年${m + 1}月`;
+  const start = new Date(y, m, 1 - new Date(y, m, 1).getDay()); // 日曜はじまり
+  const end = new Date(start); end.setDate(start.getDate() + 41);
+  const today = todayStr();
+  const byDay = {};
+  state.companies.forEach(c => c.events.forEach(ev => { (byDay[ev.date] ||= []).push({ c, ev }); }));
+  Object.values(byDay).forEach(a => a.sort((p, q) => evKey(p.ev).localeCompare(evKey(q.ev))));
+  const gByDay = {};
+  gcalFor(start, end).forEach(g => {
+    for (let d = new Date(g.date + 'T00:00'); ymdOf(d) <= (g.endDate || g.date); d.setDate(d.getDate() + 1)) (gByDay[ymdOf(d)] ||= []).push(g);
+  });
+  const cells = [];
+  for (let i = 0; i < 42; i++) {
+    const d = new Date(start); d.setDate(start.getDate() + i);
+    const ds = ymdOf(d);
+    const evs = byDay[ds] || [];
+    const gs = gByDay[ds] || [];
+    const chips = evs.slice(0, 2).map(({ c, ev }) => `<span class="mchip ${ev.done ? 'done' : ''}" style="--h:${hueOf(c)}">${esc(ev.title)}</span>`).join('');
+    const more = evs.length > 2 ? `<span class="mmore">+${evs.length - 2}</span>` : '';
+    cells.push(`<button type="button" class="mday ${d.getMonth() !== m ? 'out' : ''} ${ds === today ? 'today' : ''} ${ds === monthSel ? 'sel' : ''} ${d.getDay() === 0 ? 'sun' : d.getDay() === 6 ? 'sat' : ''}" data-day="${ds}">
+      <span class="mnum">${d.getDate()}</span>${chips}${more}${gs.length ? `<span class="gdots">${'•'.repeat(Math.min(3, gs.length))}</span>` : ''}</button>`);
+  }
+  $('#month-grid').innerHTML = ['日', '月', '火', '水', '木', '金', '土'].map((w, i) => `<span class="mwd ${i === 0 ? 'sun' : i === 6 ? 'sat' : ''}">${w}</span>`).join('') + cells.join('');
+  // 選んだ日の予定
+  const evs = byDay[monthSel] || [];
+  const gs = gByDay[monthSel] || [];
+  const [sy, sm, sd] = monthSel.split('-').map(Number);
+  $('#month-day').innerHTML = `<div class="day-head ${monthSel === today ? 'today' : ''}">${sm}月${sd}日（${'日月火水木金土'[new Date(sy, sm - 1, sd).getDay()]}）・${relLabel(monthSel)}
+      <button type="button" class="link small" data-add-day="${monthSel}">＋ この日に予定</button></div>` +
+    (evs.length || gs.length ? evs.map(({ c, ev }) => `
+      <div class="sched-item ${ev.done ? 'done' : ''}">
+        <input type="checkbox" data-cid="${c.id}" data-eid="${ev.id}" ${ev.done ? 'checked' : ''} aria-label="完了">
+        <span class="sched-time">${ev.time ? `${ev.time}${ev.endTime ? `<small>〜${ev.endTime}</small>` : ''}` : '終日'}</span>
+        <div class="sched-main" data-cid="${c.id}" data-eid="${ev.id}">
+          <div class="sched-title"><span class="mdot" style="--h:${hueOf(c)}"></span>${esc(ev.title)}</div>
+          <div class="sched-company">${esc(c.name)}${ev.place ? '・' + esc(ev.place) : ''}</div>
+        </div>
+      </div>`).join('') + gs.map(g => `
+      <div class="sched-item gcal-item">
+        <span class="sched-time">${g.allDay ? '終日' : `${g.time}${g.endTime ? `<small>〜${g.endTime}</small>` : ''}`}</span>
+        <div class="sched-main"><div class="sched-title">${esc(g.title)}</div><div class="sched-company">Google カレンダー・${esc(g.calendar)}</div></div>
+      </div>`).join('')
+    : '<p class="muted-empty">予定はありません</p>');
+}
+$('#sched-mode').addEventListener('click', e => {
+  const b = e.target.closest('[data-m]');
+  if (!b) return;
+  try { localStorage.setItem(SCHED_MODE_KEY, b.dataset.m); } catch { /* ignore */ }
+  renderSchedule();
+});
+$('#month-view').addEventListener('click', e => {
+  const mv = e.target.closest('[data-mv]');
+  if (mv) {
+    const n = Number(mv.dataset.mv);
+    if (n === 0) { const d = new Date(); monthCursor = new Date(d.getFullYear(), d.getMonth(), 1); monthSel = todayStr(); }
+    else monthCursor = new Date(monthCursor.getFullYear(), monthCursor.getMonth() + n, 1);
+    renderMonth();
+    return;
+  }
+  const day = e.target.closest('[data-day]');
+  if (day) {
+    monthSel = day.dataset.day;
+    if (day.classList.contains('out')) monthCursor = new Date(Number(monthSel.slice(0, 4)), Number(monthSel.slice(5, 7)) - 1, 1);
+    renderMonth();
+    return;
+  }
+  const add = e.target.closest('[data-add-day]');
+  if (add) { openEvent(null, null); setTimeout(() => { const f = $('#event-form'); if (f?.date) f.date.value = add.dataset.addDay; }, 0); return; }
+  const main = e.target.closest('.sched-main[data-eid]');
+  if (main) openEvent(main.dataset.cid, main.dataset.eid);
+});
+$('#month-view').addEventListener('change', e => {
+  const cb = e.target.closest('input[type=checkbox][data-eid]');
+  if (cb) { toggleEventDone(cb.dataset.cid, cb.dataset.eid, cb.checked); renderMonth(); }
+});
+// 横にスワイプで月を移動
+(() => {
+  let sx = 0, sy = 0;
+  const g = $('#month-grid');
+  g.addEventListener('touchstart', e => { sx = e.touches[0].clientX; sy = e.touches[0].clientY; }, { passive: true });
+  g.addEventListener('touchend', e => {
+    const dx = e.changedTouches[0].clientX - sx, dy = e.changedTouches[0].clientY - sy;
+    if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+      monthCursor = new Date(monthCursor.getFullYear(), monthCursor.getMonth() + (dx < 0 ? 1 : -1), 1);
+      renderMonth();
+    }
+  });
+})();
 
 /* ---------- 職種を選ぶ ---------- */
 const jDialog = $('#job-dialog');
