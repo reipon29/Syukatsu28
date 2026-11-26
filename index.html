@@ -637,6 +637,20 @@
     </div>
   </dialog>
 
+  <!-- 職種を選ぶ -->
+  <dialog id="job-dialog" class="small-dialog">
+    <div class="dialog-body">
+      <h2>どの職種で登録しますか？</h2>
+      <p class="note">この募集要項には職種が <b id="job-count"></b> あります。応募する・気になる職種を選んでください。</p>
+      <div id="job-list" class="job-list"></div>
+      <p class="note small" id="job-hint"></p>
+      <div class="btn-col">
+        <button type="button" class="btn primary" id="job-ok">選んだ職種で登録</button>
+        <button type="button" class="btn" id="job-all">分けずに1つで登録</button>
+      </div>
+    </div>
+  </dialog>
+
   <!-- クイック追加 -->
   <dialog id="quick-dialog" class="sheet">
     <div class="dialog-head">

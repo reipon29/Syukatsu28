@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '2.13.0';
+const APP_VERSION = '2.14.0';
 const STORAGE_KEY = 'syukatsu.v1';
 
 const STATUSES = [
@@ -1124,7 +1124,7 @@ $('#delete-company').addEventListener('click', () => {
 const POSTING_LABELS = [
   ['recruiter',    ['募集者の名称', '募集者', '募集企業', '採用企業', '会社名']],
   ['job',          ['募集職種', '職種', '募集コース', 'コース', '仕事内容', '業務内容']],
-  ['eligibility',  ['応募資格', '応募対象', '対象', '対象者', '募集対象', '応募条件', '応募要件', '必須スキル・経験', '必須スキル', '必須条件', '必須要件', '必須経験']],
+  ['eligibility',  ['応募資格', '応募対象', '対象', '対象者', '募集対象', '応募条件', '応募要件', '必須スキル・経験', '必須スキル', '必須条件', '必須要件', '必須経験', '募集学科', '対象学科', '募集学部', '対象学部', '学部学科', '募集学部・学科']],
   ['startDate',    ['入社時期', '入社日', '入社予定日']],
   ['contract',     ['契約期間', '雇用形態', '勤務形態', '雇用区分']],
   ['probation',    ['試用期間']],
@@ -1315,12 +1315,32 @@ function isPrevYearPosting(raw, gradYear) {
   return pat(gradYear - 1).test(body) && !pat(gradYear).test(body);
 }
 /** 募集職種の欄から職種名の一覧を取り出す（「総合職\nバックオフィス職」→ 2つ） */
+function jobLines(jobText) {
+  let lines = (jobText || '').split('\n').map(l => l.trim().replace(/^[・■●◆\-－]\s*/, '')).filter(l => l && !/^※/.test(l));
+  if (lines.length === 1) {
+    lines = lines[0].split(/\s*[／/]\s*/).filter(Boolean);
+    if (lines.length === 1) lines = splitTopLevel(lines[0]).map(x => x.trim()).filter(Boolean);
+  }
+  // 「システム開発エンジニア(アプリケーション開発、…)」→ 名前と説明に分ける
+  return lines.map(l => {
+    const m = l.match(/^(.+?)\s*[（(]([^]*)[)）]\s*$/);
+    return m ? { name: m[1].trim(), desc: m[2].trim(), line: l } : { name: l, desc: '', line: l };
+  });
+}
 function detectJobs(jobText) {
-  if (!jobText) return [];
-  let names = jobText.split('\n').map(l => l.trim().replace(/^[・■●◆\-－]\s*/, '')).filter(l => l && !/^※/.test(l));
-  if (names.length === 1) names = names[0].split(/\s*[／/、]\s*/).filter(Boolean);
-  const ok = names.length >= 2 && names.length <= 6 && names.every(n => n.length <= 20 && !/[。．]/.test(n));
+  // 先頭から「職種名らしい行」が続くところまでを職種とみなす（後ろの業務内容の説明などは含めない）
+  const names = [];
+  for (const j of jobLines(jobText)) {
+    if (j.name.length > 25 || /^[（(※＊*]|[。．]|上記|同上|以下/.test(j.name)) break;
+    names.push(j.name);
+  }
+  const ok = names.length >= 2 && names.length <= 8 && names.every(n => n.length <= 25 && !/[。．]/.test(n));
   return ok ? [...new Set(names)] : [];
+}
+/** 職種の「仕事内容」欄に入れる文（説明があれば付ける） */
+function jobText(job, jobText) {
+  const j = jobLines(jobText).find(x => x.name === job);
+  return j && j.desc ? `${job}（${j.desc}）` : job;
 }
 /** その行が「総合職：〜」「総合職（修士卒）〜」のように、どの職種の行か（なければ null） */
 function lineJob(line, jobs) {
@@ -1337,34 +1357,45 @@ function rawForJob(raw, jobs, job) {
     return [line];
   }).join('\n');
 }
-function applyPosting(auto = false) {
+async function applyPosting(auto = false) {
   // ブックマークでコピーしたテキストなら、先頭の URL・ページ名を取り出して使う
   const clip = splitClip(cForm.p_raw.value);
   if (clip) { cForm.p_raw.value = clip.text; fillClipMeta(clip); }
   const raw = cForm.p_raw.value;
   if (!raw.trim()) { if (!auto) toast('募集要項のテキストを貼り付けてください'); return; }
-  const jobs = editing.postings.length === 1 && !cForm.p_title.value.trim() ? detectJobs(parsePosting(raw).job) : [];
+  const allJobText = parsePosting(raw).job;
+  const jobs = editing.postings.length === 1 && !cForm.p_title.value.trim() ? detectJobs(allJobText) : [];
   if (!jobs.length) { fillPostingFromText(raw, auto); return; }
 
-  const specific = raw.split('\n').some(l => lineJob(l, jobs) && l.trim() !== lineJob(l, jobs));
-  const split = confirm(`募集職種が ${jobs.length}つ 見つかりました：\n${jobs.map(j => '・' + j).join('\n')}\n\n` +
-    (specific ? '給与・勤務地など、職種ごとに違う項目があります。\n\n' : '') +
-    'OK → 職種ごとにタブを分けて入力\nキャンセル → 1つにまとめて入力（条件が同じとき）');
-  if (!split) { fillPostingFromText(raw, auto, { title: jobs.join('・') }); return; }
+  // 「募集職種」の一覧の行そのものは、職種ごとに違う条件とはみなさない
+  const listLines = new Set(jobLines(allJobText).map(j => j.line));
+  const specific = raw.split('\n').some(l => {
+    const j = lineJob(l, jobs);
+    const t = l.trim().replace(/^[・■●◆\-－]\s*/, '');
+    return j && t !== j && !listLines.has(t);
+  });
+  const picked = await pickJobs(jobLines(allJobText).filter(j => jobs.includes(j.name)), specific);
+  if (!picked) { fillPostingFromText(raw, auto); return; } // まとめて1つ
+  if (picked.length === 1) {
+    fillPostingFromText(rawForJob(raw, jobs, picked[0]), auto, { title: picked[0] });
+    cForm.p_job.value = jobText(picked[0], allJobText);
+    return;
+  }
 
   // 会社全体の勤務地には、すべての職種の勤務地を入れておく
   const allLoc = parsePosting(raw).locations;
   if (allLoc && !cForm.locations.value.trim()) cForm.locations.value = allLoc;
   const results = [];
-  jobs.forEach((job, i) => {
+  picked.forEach((job, i) => {
     if (i > 0) addPosting(false);
     results.push({ job, ...fillPostingFromText(rawForJob(raw, jobs, job), auto, { title: job, quiet: true, perPosting: true }) });
+    cForm.p_job.value = jobText(job, allJobText);
     cForm.p_raw.value = raw;
   });
   switchPosting(0);
   $('#posting-section').open = true;
   const sal = results.map(r => `${r.job} ${r.salary ? r.salary.toLocaleString('ja-JP') + '円' : '初任給なし'}`).join(' / ');
-  toast(`${jobs.length}つの職種に分けて入力しました（${sal}）。タブで切り替えて確認してください`);
+  toast(`${picked.length}つの職種に分けて入力しました（${sal}）。タブで切り替えて確認してください`);
   const later = [...new Set(results.flatMap(r => r.later || []).filter(m => !/^初任給/.test(m)))];
   later.forEach((m, i) => setTimeout(() => toast(m), 2500 * (i + 1)));
 }
@@ -2562,14 +2593,14 @@ function checkPostingUrl(url) {
   return '';
 }
 /** 取得した本文を募集要項の欄に流し込む */
-function fillFetchedPosting(data) {
+async function fillFetchedPosting(data) {
   // ページの見出しと内容の間に空行があると読み取れないので詰める
   cForm.p_raw.value = data.text.replace(/\n[ \t\u3000]*\n+/g, '\n');
   if (!cForm.name.value.trim()) {
     const nm = guessCompanyName(data.title, data.text);
     if (nm) { cForm.name.value = nm; updateIndustryUi(); }
   }
-  applyPosting(true);
+  await applyPosting(true);
   // どのページから読んだかを職種の「その他」に残す
   if (!cForm.p_note.value.includes(data.url)) cForm.p_note.value = `${cForm.p_note.value ? cForm.p_note.value + '\n' : ''}出典: ${data.url}`;
 }
@@ -2587,7 +2618,7 @@ async function importPostingFromUrl(action) {
       status.innerHTML = `募集要項らしいページが見つかりませんでした（${data.tried?.length || 1}ページを確認）。募集要項のページを開いてその URL を入れ、「このページを読む」を試すか、ブックマークで取り込んでください。`;
       return;
     }
-    fillFetchedPosting(data);
+    await fillFetchedPosting(data);
     status.innerHTML = `「${esc(data.title || data.url)}」から読み取りました。<a href="${esc(data.url)}" target="_blank" rel="noopener">ページを開く</a>`;
   } catch (err) {
     status.textContent = err.message;
@@ -2598,6 +2629,40 @@ async function importPostingFromUrl(action) {
 }
 $('#posting-find').addEventListener('click', () => importPostingFromUrl('find'));
 $('#posting-fetch').addEventListener('click', () => importPostingFromUrl('fetch'));
+
+/* ---------- 職種を選ぶ ---------- */
+const jDialog = $('#job-dialog');
+const ENGINEER_RE = /エンジニア|開発|SE\b|システム|技術|IT|プログラ|データ|デジタル|ソフトウェア|インフラ|研究/i;
+/** 職種が複数ある募集要項で、どれを登録するか選んでもらう（null = まとめて1つで登録） */
+function pickJobs(jobs, specific) {
+  return new Promise(resolve => {
+    // 最初から選んでおくのは、エンジニア系の最初の1つ（なければ先頭）
+    const checked = new Set([(jobs.find(j => ENGINEER_RE.test(j.name)) || jobs[0]).name]);
+    $('#job-count').textContent = `${jobs.length}つ`;
+    $('#job-hint').textContent = specific ? '給与・勤務地などが職種ごとに違う項目があります。複数選ぶと、職種ごとにタブを分けて入力します。'
+      : '複数選ぶと、職種ごとにタブを分けて入力します。';
+    $('#job-list').innerHTML = jobs.map(j => `<label class="job-opt">
+      <input type="checkbox" value="${esc(j.name)}" ${checked.has(j.name) ? 'checked' : ''}>
+      <span><b>${esc(j.name)}</b>${j.desc ? `<small>${esc(j.desc)}</small>` : ''}</span></label>`).join('');
+    const done = v => { jDialog.close(); cleanup(); resolve(v); };
+    const onOk = () => {
+      const v = $$('#job-list input:checked').map(i => i.value);
+      if (!v.length) { toast('職種を1つ以上選んでください'); return; }
+      done(v);
+    };
+    const onAll = () => done(null);
+    const onCancel = e => { e.preventDefault(); done(null); };
+    const cleanup = () => {
+      $('#job-ok').removeEventListener('click', onOk);
+      $('#job-all').removeEventListener('click', onAll);
+      jDialog.removeEventListener('cancel', onCancel);
+    };
+    $('#job-ok').addEventListener('click', onOk);
+    $('#job-all').addEventListener('click', onAll);
+    jDialog.addEventListener('cancel', onCancel);
+    jDialog.showModal();
+  });
+}
 
 /* ---------- 見た目の部品 ---------- */
 const HUES = [221, 262, 190, 152, 28, 200, 280, 170, 45, 320];

@@ -798,3 +798,17 @@ dialog > *, dialog form > * { min-width: 0; max-width: 100%; }
 /* パネル全体を少しやわらかく */
 .panel { border-radius: 18px; }
 .panel h2, .panel-head h2 { letter-spacing: .01em; }
+
+/* ============ 職種を選ぶ ============ */
+.job-list { display: grid; gap: 8px; margin: 10px 0; max-height: 50dvh; overflow: auto; }
+.job-opt { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border: 1px solid var(--border); border-radius: 12px; cursor: pointer; background: var(--surface); }
+.job-opt:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
+.job-opt input { margin-top: 2px; }
+.job-opt span { display: grid; gap: 2px; min-width: 0; }
+.job-opt small { color: var(--muted); font-size: 12px; line-height: 1.5; }
+/* 職種の選択肢：.small-dialog label の共通スタイルを打ち消して、チェックと名前を横に並べる */
+.small-dialog label.job-opt { display: flex; flex-direction: row; margin: 0; font-size: 14px; color: var(--text); font-weight: 400; }
+.small-dialog label.job-opt input { margin: 2px 0 0; }
+.job-opt b { font-size: 15px; font-weight: 700; color: var(--text); }
+.job-list { padding: 2px; }
+.job-list:focus, .job-list:focus-visible { outline: none; }
