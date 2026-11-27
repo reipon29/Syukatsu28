@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '2.19.2';
+const APP_VERSION = '2.19.3';
 const STORAGE_KEY = 'syukatsu.v1';
 
 const STATUSES = [
@@ -1626,16 +1626,26 @@ async function applyAiPosting(o) {
     toast('入力しました。内容を確認して保存してください');
   }
 }
-/** 編集画面の外で貼り付けたとき：1社なら編集画面で確認、複数社ならまとめて登録 */
+/** 答えの会社に当たる登録済みの企業（company と aliases の名前を順に照合） */
+function findAiCompany(o) {
+  const names = [o.company, ...(Array.isArray(o.aliases) ? o.aliases : [])].map(nameKey).filter(Boolean);
+  for (const k of names) {
+    const hit = state.companies.find(c => nameKey(c.name) === k);
+    if (hit) return hit;
+  }
+  return null;
+}
+/** 編集画面の外で貼り付けたとき：1社なら編集画面で確認、複数社ならまとめて登録
+    "replace": true の会社は、登録済みなら職種をまとめて置き換える（ステータス・予定・メモはそのまま） */
 async function importAiAnswer(text) {
   const list = parseAiAll(text);
   if (!list.length) {
     if (looksLikeAi(text)) { alert(aiErrorMsg()); return true; }
     return false;
   }
-  if (list.length === 1) {
+  if (list.length === 1 && !list[0].replace) {
     const o = list[0];
-    const hit = state.companies.find(c => nameKey(c.name) === nameKey(o.company));
+    const hit = findAiCompany(o);
     if (hit && hasPosting(hit) && !confirm(`「${hit.name}」はすでに募集要項が入っています。職種を追加しますか？`)) return true;
     openCompany(hit ? hit.id : null);
     if (!hit) { cForm.status.value = 'interest'; }
@@ -1643,13 +1653,22 @@ async function importAiAnswer(text) {
     $('.paste-box')?.scrollIntoView({ block: 'start' });
     return true;
   }
-  let added = 0, updated = 0;
+  const toReplace = list.filter(o => o.replace).map(findAiCompany).filter(c => c && hasPosting(c));
+  if (toReplace.length && !confirm(`${toReplace.length}社（${toReplace.slice(0, 5).map(c => c.name).join('、')}${toReplace.length > 5 ? ' など' : ''}）は、入力済みの職種を読み込む内容に置き換えます。よろしいですか？`)) return true;
+  let added = 0, updated = 0, replaced = 0;
   for (const o of list) {
     const name = str(o.company).trim();
     if (!name) continue;
     const postings = o.jobs.map(j => normalizePosting(aiPostingData(j, o.jobs.length === 1)));
-    const hit = state.companies.find(c => nameKey(c.name) === nameKey(name));
-    if (hit) {
+    const hit = findAiCompany(o);
+    if (hit && o.replace) {
+      hit.postings = postings;
+      ['hq', 'locations'].forEach(k => { if (str(o[k]).trim()) hit[k] = str(o[k]).trim(); });
+      if (!hit.homepage && safeUrl(o.homepage)) hit.homepage = o.homepage;
+      if (!hit.site && safeUrl(o.recruitUrl)) hit.site = o.recruitUrl;
+      hit.updatedAt = Date.now();
+      replaced++;
+    } else if (hit) {
       const titles = new Set(hit.postings.filter(postingHasData).map(p => p.title));
       hit.postings = [...hit.postings.filter(postingHasData), ...postings.filter(p => !titles.has(p.title))];
       ['hq', 'locations'].forEach(k => { if (!hit[k] && o[k]) hit[k] = str(o[k]); });
@@ -1665,7 +1684,7 @@ async function importAiAnswer(text) {
   }
   save();
   render();
-  toast(`Claude の答えから ${added}社 を追加、${updated}社 に職種を追加しました`);
+  toast(`Claude の答えから ${added}社 を追加` + (updated ? `、${updated}社 に職種を追加` : '') + (replaced ? `、${replaced}社 の職種を置き換え` : '') + 'しました');
   return true;
 }
 async function copyAiTemplate() {
@@ -2053,12 +2072,22 @@ function showImportPreview(data, label) {
   pendingImport = { next, merged: preview.state };
   iDialog.showModal();
 }
+/** バックアップの JSON か（入力の型の JSON と見分ける） */
+function isBackupJson(text) {
+  try {
+    const d = JSON.parse(text);
+    return d?.app === 'syukatsu' || (Array.isArray(d?.companies) && d.companies.some(c => c && typeof c.name === 'string' && !c.jobs));
+  } catch { return false; }
+}
 $('#import-file').addEventListener('change', async e => {
   const file = e.target.files[0];
   e.target.value = '';
   if (!file) return;
   try {
-    showImportPreview(JSON.parse(await file.text()), 'ファイル');
+    const text = await file.text();
+    // 入力の型（Claude の答え）の JSON ファイルなら、貼り付けたときと同じように企業・職種を登録する
+    if (!isBackupJson(text) && await importAiAnswer(text)) return;
+    showImportPreview(JSON.parse(text), 'ファイル');
   } catch (err) {
     alert('読み込みに失敗しました: ' + err.message);
   }
