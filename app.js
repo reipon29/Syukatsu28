@@ -466,13 +466,13 @@ $('#industry-select').innerHTML = '<option value="">わからない・未設定<
 
 // 職種の分類（比較で同じ職種どうしを並べるため。上から順に判定）
 const JOB_KINDS = [
-  { key: 'consult', label: 'コンサルタント',       re: /コンサル/ },
-  { key: 'sales',   label: '営業',                 re: /営業|セールス|MR\b|販売/i },
-  { key: 'it',      label: 'IT・エンジニア',       re: /エンジニア|SE\b|システム|\bIT|ＩＴ|プログラ|ソフトウェア|インフラ|データ|デジタル|DX|アプリ|Web|ネットワーク|情報/i },
-  { key: 'rd',      label: '研究・開発・技術',     re: /研究|開発|設計|技術|生産|品質|製造|R&D|機械|電気|電子|化学/i },
-  { key: 'plan',    label: '企画・マーケティング', re: /企画|マーケ|商品|広報|宣伝|デザイン/ },
-  { key: 'corp',    label: '事務・管理部門',       re: /事務|管理|経理|財務|人事|総務|法務|コーポレート|スタッフ/ },
-  { key: 'general', label: '総合職',               re: /総合職|オープン|ゼネラル/ },
+  { key: 'consult', label: 'コンサル',   re: /コンサル/ },
+  { key: 'sales',   label: '営業',       re: /営業|セールス|MR\b|販売/i },
+  { key: 'it',      label: 'IT・SE',     re: /エンジニア|SE\b|システム|\bIT|ＩＴ|プログラ|ソフトウェア|インフラ|データ|デジタル|DX|アプリ|Web|ネットワーク|情報/i },
+  { key: 'rd',      label: '研究・技術', re: /研究|開発|設計|技術|生産|品質|製造|R&D|機械|電気|電子|化学/i },
+  { key: 'plan',    label: '企画・マーケ', re: /企画|マーケ|商品|広報|宣伝|デザイン/ },
+  { key: 'corp',    label: '事務・管理', re: /事務|管理|経理|財務|人事|総務|法務|コーポレート|スタッフ/ },
+  { key: 'general', label: '総合職',     re: /総合職|オープン|ゼネラル/ },
 ];
 /** 職種名（なければ仕事内容）から職種の分類を決める */
 function jobKind(p) {
@@ -483,7 +483,7 @@ function jobKind(p) {
   }
   return 'other';
 }
-const jobKindLabel = key => JOB_KINDS.find(k => k.key === key)?.label || 'その他・未分類';
+const jobKindLabel = key => JOB_KINDS.find(k => k.key === key)?.label || 'その他';
 function fillJobKindFilter() {
   const el = $('#cmp-job');
   const cur = el.value || el.dataset.pref || 'all';
@@ -491,9 +491,9 @@ function fillJobKindFilter() {
   state.companies.forEach(c => c.postings.forEach(p => {
     if (postingHasData(p)) { const k = jobKind(p); count[k] = (count[k] || 0) + 1; }
   }));
-  el.innerHTML = '<option value="all">職種: すべて</option>' +
+  el.innerHTML = '<option value="all">すべて</option>' +
     [...JOB_KINDS.map(k => k.key), 'other'].filter(k => count[k])
-      .map(k => `<option value="${k}">職種: ${jobKindLabel(k)}（${count[k]}）</option>`).join('');
+      .map(k => `<option value="${k}">${jobKindLabel(k)}（${count[k]}）</option>`).join('');
   el.value = [...el.options].some(o => o.value === cur) ? cur : 'all';
 }
 
@@ -776,7 +776,7 @@ function renderCompare() {
     if (vals.length >= 2) best[m.key] = m.better === 'low' ? Math.min(...vals) : Math.max(...vals);
   });
   $('#cmp-table').innerHTML =
-    `<thead><tr><th>企業／職種</th><th>職種の分類</th><th>東京</th>${CMP_METRICS.map(m => `<th>${m.label}</th>`).join('')}<th>働き方</th><th>勤務地</th><th>本社</th></tr></thead>
+    `<thead><tr><th>企業／職種</th><th>分類</th><th>東京</th>${CMP_METRICS.map(m => `<th>${m.label}</th>`).join('')}<th>働き方</th><th>勤務地</th><th>本社</th></tr></thead>
     <tbody>${sorted.map(r => `<tr data-id="${r.c.id}" data-pid="${r.p.id}">
       <td>${rowLabel(r)}</td>
       <td class="l">${esc(jobKindLabel(r.kind))}</td>
