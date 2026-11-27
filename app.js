@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '2.19.1';
+const APP_VERSION = '2.19.2';
 const STORAGE_KEY = 'syukatsu.v1';
 
 const STATUSES = [
@@ -1582,10 +1582,18 @@ function aiPostingData(j, single) {
 async function applyAiPosting(o) {
   const jobs = o.jobs.map((j, i) => ({ ...j, name: str(j.title).trim() || `職種${i + 1}`, desc: str(j.job).slice(0, 60) }));
   let sel = jobs.slice(0, 1);
-  if (jobs.length > 1 && editing.postings.length === 1 && !cForm.p_title.value.trim()) {
+  if (jobs.length > 1) {
     const picked = await pickJobs(jobs, true);
     if (picked) sel = jobs.filter(j => picked.includes(j.name));
   }
+  savePostingForm();
+  // 同じ職種名のタブがあればそこを更新、なければ空のタブ、それもなければタブを足す（入力済みの職種は上書きしない）
+  const tkey = t => str(t).replace(/[\s（）()]/g, '');
+  const slotFor = j => {
+    let i = editing.postings.findIndex(p => p.title && tkey(p.title) === tkey(j.title));
+    if (i < 0) i = editing.postings.findIndex(p => !postingHasData(p) || (!p.title && p.salary == null && !p.salaryNote));
+    if (i >= 0) switchPosting(i); else addPosting(false);
+  };
   const setIf = (n, v) => { if (v != null && String(v).trim() !== '') cForm[n].value = String(v).trim(); };
   if (!cForm.name.value.trim()) setIf('name', o.company);
   if (!cForm.hq.value.trim()) setIf('hq', o.hq);
@@ -1593,8 +1601,8 @@ async function applyAiPosting(o) {
   if (!cForm.homepage.value.trim() && safeUrl(o.homepage)) setIf('homepage', o.homepage);
   if (!$('#posting-url').value.trim() && safeUrl(o.recruitUrl)) $('#posting-url').value = o.recruitUrl;
   const results = [];
-  sel.forEach((j, i) => {
-    if (i > 0) addPosting(false);
+  sel.forEach(j => {
+    slotFor(j);
     const d = aiPostingData(j, jobs.length === 1);
     AI_TEXT_KEYS.forEach(k => { if (d[k]) cForm['p_' + k].value = d[k]; });
     POSTING_NUM.forEach(k => { if (d[k] != null) cForm['p_' + k].value = d[k]; });
@@ -1630,7 +1638,6 @@ async function importAiAnswer(text) {
     const hit = state.companies.find(c => nameKey(c.name) === nameKey(o.company));
     if (hit && hasPosting(hit) && !confirm(`「${hit.name}」はすでに募集要項が入っています。職種を追加しますか？`)) return true;
     openCompany(hit ? hit.id : null);
-    if (hit && hasPosting(hit)) addPosting(false);
     if (!hit) { cForm.status.value = 'interest'; }
     await applyAiPosting(o);
     $('.paste-box')?.scrollIntoView({ block: 'start' });
