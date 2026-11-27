@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '2.19.0';
+const APP_VERSION = '2.19.1';
 const STORAGE_KEY = 'syukatsu.v1';
 
 const STATUSES = [
@@ -1409,6 +1409,7 @@ async function applyPosting(auto = false) {
   // Claude で整形した答え（JSON）を貼り付けたとき
   const ai = parseAiPosting(raw);
   if (ai) { await applyAiPosting(ai); return; }
+  if (looksLikeAi(raw)) { alert(aiErrorMsg()); return; } // JSON が崩れているときは、普通の文章として読まない
   const allJobText = parsePosting(raw).job;
   const canSplit = editing.postings.length === 1 && !cForm.p_title.value.trim();
   const jobs = canSplit ? detectJobs(allJobText) : [];
@@ -1495,21 +1496,77 @@ ${JSON.stringify(example, null, 1)}
 \`\`\``;
 }
 /** 貼り付けた文から、入力の型の JSON をすべて取り出す */
+/** Claude の答えによくある崩れを直す（文字列の中の改行・末尾の「,」・全角の引用符・コメント・数字のカンマなど） */
+function repairJson(t) {
+  t = t.replace(/^﻿/, '').replace(/[“”＂]/g, '"').replace(/ /g, ' ');
+  let out = '', inStr = false, bs = false;
+  for (let i = 0; i < t.length; i++) {
+    const ch = t[i];
+    if (inStr) {
+      if (bs) { out += ch; bs = false; }
+      else if (ch === '\\') { out += ch; bs = true; }
+      else if (ch === '"') { out += ch; inStr = false; }
+      else if (ch === '\n') out += '\\n';
+      else if (ch === '\t') out += '\\t';
+      else if (ch !== '\r') out += ch;
+      continue;
+    }
+    if (ch === '"') { inStr = true; out += ch; continue; }
+    if (ch === '/' && t[i + 1] === '/') { while (i < t.length && t[i] !== '\n') i++; out += '\n'; continue; }
+    if (ch === '/' && t[i + 1] === '*') { const e = t.indexOf('*/', i + 2); i = e < 0 ? t.length : e + 1; continue; }
+    out += ch;
+  }
+  return out
+    .replace(/,(\s*[}\]])/g, '$1')
+    .replace(/:(\s*)(-?\d{1,3}(?:,\d{3})+(?:\.\d+)?)(?=\s*[,}\]\n])/g, (m, sp, n) => ':' + sp + n.replace(/,/g, ''))
+    .replace(/:(\s*)(?:None|undefined|NaN)\b/g, ':$1null').replace(/:(\s*)True\b/g, ':$1true').replace(/:(\s*)False\b/g, ':$1false');
+}
+/** 貼り付けた文が入力の型の答え（JSON）らしいか */
+const looksLikeAi = raw => /\{[\s\S]*["“”]?(?:jobs|company|format)["“”]?\s*:/.test(raw || '');
+let aiParseError = '';
+/** 1つの JSON ブロックを読む（失敗したら直してからもう一度） */
+function parseJsonLoose(b) {
+  try { return JSON.parse(b); } catch { /* 直してからもう一度 */ }
+  const fixed = repairJson(b);
+  try { return JSON.parse(fixed); } catch (err) {
+    // 「{…}{…}」のように会社ごとのオブジェクトが並んでいる
+    try { return JSON.parse(`[${fixed.replace(/}\s*{/g, '},{')}]`); } catch { /* 下で報告 */ }
+    const pos = Number((String(err.message).match(/position (\d+)/) || [])[1]);
+    aiParseError = Number.isFinite(pos) ? `${pos}文字目あたりの形が崩れています（…${fixed.slice(Math.max(0, pos - 25), pos + 15).replace(/\n/g, ' ')}…）` : String(err.message);
+    return null;
+  }
+}
+/** 会社1つ分に整える（jobs が無く、職種の項目が会社と同じ階層にある答えにも対応） */
+function aiCompany(x) {
+  if (!x || typeof x !== 'object') return null;
+  let jobs = x.jobs ?? x.positions ?? x.postings;
+  if (jobs && !Array.isArray(jobs)) jobs = [jobs];
+  if (!jobs || !jobs.length) {
+    if (['title', 'salary', 'salaryNote', 'job'].some(k => x[k] != null && x[k] !== '')) jobs = [x];
+    else return null;
+  }
+  return { ...x, company: x.company ?? x.companyName ?? x.name ?? '', jobs: jobs.filter(j => j && typeof j === 'object') };
+}
+/** 貼り付けた文から、入力の型の JSON をすべて取り出す */
 function parseAiAll(raw) {
-  if (!raw || (!raw.includes(AI_FORMAT) && !/"jobs"\s*:/.test(raw))) return [];
-  const blocks = [...raw.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)].map(m => m[1]);
-  if (!blocks.length) blocks.push(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1));
+  aiParseError = '';
+  if (!looksLikeAi(raw)) return [];
+  let blocks = [...raw.matchAll(/```[a-zA-Z]*\s*\n?([\s\S]*?)```/g)].map(m => m[1]).filter(b => b.includes('{'));
+  if (!blocks.length) {
+    const i = raw.search(/[{[]/);
+    blocks = [raw.slice(i, Math.max(raw.lastIndexOf('}'), raw.lastIndexOf(']')) + 1)];
+  }
   const out = [];
   for (const b of blocks) {
-    try {
-      const o = JSON.parse(b);
-      for (const x of Array.isArray(o) ? o : Array.isArray(o.companies) ? o.companies : [o]) {
-        if (x && Array.isArray(x.jobs) && x.jobs.length) out.push(x);
-      }
-    } catch { /* 形が崩れているブロックは飛ばす */ }
+    const o = parseJsonLoose(b.trim());
+    if (o == null) continue;
+    const list = Array.isArray(o) ? o : Array.isArray(o.companies) ? o.companies : [o];
+    list.map(aiCompany).filter(x => x && x.jobs.length).forEach(x => out.push(x));
   }
+  if (!out.length && !aiParseError) aiParseError = '会社や職種（jobs）の項目が見つかりません';
   return out;
 }
+const aiErrorMsg = () => `Claude の答えを読み取れませんでした。\n${aiParseError}\n\nClaude の答えの右下（または右上）の「コピー」ボタンで、答え全体をコピーし直して貼り付けてください。直らないときは Claude に「JSONの形が崩れています。もう一度、正しいJSONだけで出してください」と頼んでください。`;
 const parseAiPosting = raw => parseAiAll(raw)[0] || null;
 const aiNum = v => { const n = Number(v); return v != null && v !== '' && Number.isFinite(n) && n > 0 ? n : null; };
 /** 入力の型の1職種 → アプリの職種データ */
@@ -1564,7 +1621,10 @@ async function applyAiPosting(o) {
 /** 編集画面の外で貼り付けたとき：1社なら編集画面で確認、複数社ならまとめて登録 */
 async function importAiAnswer(text) {
   const list = parseAiAll(text);
-  if (!list.length) return false;
+  if (!list.length) {
+    if (looksLikeAi(text)) { alert(aiErrorMsg()); return true; }
+    return false;
+  }
   if (list.length === 1) {
     const o = list[0];
     const hit = state.companies.find(c => nameKey(c.name) === nameKey(o.company));
@@ -1622,10 +1682,13 @@ $('#ai-paste-new').addEventListener('click', async () => {
 });
 // PC：画面のどこでも Ctrl+V で Claude の答えを貼り付けられる（入力欄の中は除く）
 document.addEventListener('paste', e => {
-  if (e.target.closest && e.target.closest('input, textarea, [contenteditable]')) return;
-  if (document.querySelector('dialog[open]')) return;
   const text = e.clipboardData?.getData('text') || '';
-  if (!parseAiAll(text).length) return;
+  if (!looksLikeAi(text)) return;
+  const open = $$('dialog[open]');
+  // 「企業を追加」の画面では、企業名の欄に貼っても答えとして読む
+  if (open.length === 1 && open[0].id === 'quick-dialog') { e.preventDefault(); qDialog.close(); importAiAnswer(text); return; }
+  if (e.target.closest && e.target.closest('input, textarea, [contenteditable]')) return;
+  if (open.length) return;
   e.preventDefault();
   importAiAnswer(text);
 });
