@@ -363,6 +363,15 @@
           <p id="paste-target" class="note small paste-target" hidden></p>
           <textarea name="p_raw" rows="2" placeholder="ここに直接貼り付けてもOK（貼った瞬間に読み取ります）"></textarea>
           <button type="button" id="parse-posting" class="btn small">もう一度読み取る</button>
+          <div class="ai-box">
+            <p class="note small"><b>うまく読み取れないときは</b>、Claude に整えてもらってから入力できます。</p>
+            <button type="button" id="ai-posting" class="btn full-w">🤖 Claude で整えてから入力</button>
+            <ol id="ai-steps" class="ai-steps note small" hidden>
+              <li>Claude への依頼文をコピーしました。</li>
+              <li><a href="https://claude.ai/new" target="_blank" rel="noopener">Claude を開く ↗</a> → 貼り付けて送信</li>
+              <li>返ってきた答え（JSON）をコピーして、ここに戻り「コピーした募集要項を貼り付け」を押す</li>
+            </ol>
+          </div>
         </section>
 
         <section class="fgroup">

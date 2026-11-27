@@ -918,3 +918,8 @@ dialog > *, dialog form > * { min-width: 0; max-width: 100%; }
 .psrc { font-size: 13px; font-weight: 600; color: var(--accent); text-decoration: none; }
 .pcard-top { row-gap: 6px; }
 .pcard-top .pcard-title { flex-basis: 100%; }
+
+/* ============ Claude で整えてから入力（v2.18） ============ */
+.ai-box { margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--border); display: grid; gap: 8px; }
+.ai-steps { margin: 0; padding-left: 1.4em; display: grid; gap: 4px; background: var(--accent-soft); border-radius: 10px; padding: 10px 12px 10px 2em; }
+.ai-steps a { color: var(--accent); font-weight: 700; }

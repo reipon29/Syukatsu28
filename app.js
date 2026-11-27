@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '2.17.0';
+const APP_VERSION = '2.18.0';
 const STORAGE_KEY = 'syukatsu.v1';
 
 const STATUSES = [
@@ -1178,7 +1178,17 @@ const SHORT_FIELDS = new Set(['hq', 'recruiter', 'startDate', 'contract', 'proba
 const STOP_LABELS = ['社風', '企業理念', '経営理念', '会社概要', '企業情報', '会社情報', 'メッセージ', 'よくある質問', 'FAQ',
   'お問い合わせ', '問い合わせ先', '社員紹介', '社員インタビュー', 'インタビュー', '働く環境', 'キャリアパス', '事業内容',
   'プライバシーポリシー', '個人情報の取り扱い', 'ENTRY', 'エントリー', 'MYPAGE', 'マイページ', '採用担当より',
-  '採用情報', '関連求人', '求人一覧', '応募する', 'この求人に応募する'];
+  '採用情報', '関連求人', '求人一覧', '応募する', 'この求人に応募する', '連絡先', '問合せ先', '問い合わせ'];
+/** 読み取りの前の下ごしらえ：全角数字を半角に、「１．募集職種」「① 初任給」の番号を外して1項目1行に */
+function prepPosting(raw) {
+  return (raw || '').replace(/\r/g, '')
+    .replace(/[０-９]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0))
+    .replace(/(\d)[，](?=\d{3})/g, '$1,').replace(/(\d)[．](?=\d)/g, '$1.')
+    // 「５．入社後の待遇 ① 初任給 …」→ 丸数字の前で改行
+    .replace(/(^|[ \t　])([①-⑳])[ \t　]*/gm, (m, sp, n) => '\n' + n + ' ')
+    .split('\n').map(l => l.replace(/^[ \t　]*(?:\d{1,2}[.．、)）](?!\d)|[(（]\d{1,2}[)）]|[①-⑳]|[一二三四五六七八九十]{1,3}[、．.])[ \t　]*/, ''))
+    .join('\n');
+}
 // 「賞与 年2回」のように、見出しと内容が1行に並んだ行（別の項目の中にあっても振り分ける）
 const INLINE_LABELS = [
   ['bonusNote', ['賞与', 'ボーナス']],
@@ -1212,6 +1222,9 @@ function matchLabel(line) {
   // 【基本給】 大学院了：277,000円 のように、見出しと内容が1行にある
   const br = t.match(/^[【\[［]\s*([^】\]］]{1,12}?)\s*[】\]］][\s:：]*(.*)$/);
   if (br) {
+    // 【雇入れ直後】東京 のような法律の決まり文句は見出しではない（前の項目の続き）
+    if (/^(?:雇入れ直後|変更の範囲)$/.test(br[1])) return null;
+    if (STOP_LABELS.includes(br[1])) return { field: '_skip', rest: '' };
     const f = labelField(br[1]);
     if (f) return { field: f, rest: br[2] };
     // 【その他】 ○○ のように内容つきの知らない見出しは「その他」欄へ
@@ -1246,7 +1259,8 @@ function parsePosting(raw) {
   const segs = []; // [{ field, lines }]
   const inline = [];
   let cur = null;
-  for (let line of raw.replace(/\r/g, '').split('\n')) {
+  raw = prepPosting(raw);
+  for (let line of raw.split('\n')) {
     // 「見出し<TAB>内容」の表形式にも対応
     const tab = line.split('\t').map(x => x.replace(/[\s\u3000]+/g, ' ').trim());
     line = tab.filter(Boolean).join(' ');
@@ -1343,7 +1357,8 @@ function isPrevYearPosting(raw, gradYear) {
 }
 /** 募集職種の欄から職種名の一覧を取り出す（「総合職\nバックオフィス職」→ 2つ） */
 function jobLines(jobText) {
-  let lines = (jobText || '').split('\n').map(l => l.trim().replace(/^[・■●◆\-－]\s*/, '')).filter(l => l && !/^※/.test(l));
+  let lines = (jobText || '').split('\n').map(l => l.trim().replace(/^[・■●◆\-－]\s*/, ''))
+    .filter(l => l && !/^※/.test(l) && !/^[【\[（(](?:雇入れ直後|変更の範囲)/.test(l));
   if (lines.length === 1) {
     lines = lines[0].split(/\s*[／/]\s*/).filter(Boolean);
     if (lines.length === 1) lines = splitTopLevel(lines[0]).map(x => x.trim()).filter(Boolean);
@@ -1390,6 +1405,9 @@ async function applyPosting(auto = false) {
   if (clip) { cForm.p_raw.value = clip.text; fillClipMeta(clip); }
   const raw = cForm.p_raw.value;
   if (!raw.trim()) { if (!auto) toast('募集要項のテキストを貼り付けてください'); return; }
+  // Claude で整形した答え（JSON）を貼り付けたとき
+  const ai = parseAiPosting(raw);
+  if (ai) { await applyAiPosting(ai); return; }
   const allJobText = parsePosting(raw).job;
   const canSplit = editing.postings.length === 1 && !cForm.p_title.value.trim();
   const jobs = canSplit ? detectJobs(allJobText) : [];
@@ -1436,6 +1454,114 @@ function finishMultiJobs(results) {
   later.forEach((m, i) => setTimeout(() => toast(m), 2500 * (i + 1)));
 }
 
+/* ---- Claude で整形してから入力 ----
+   自動の読み取りがうまくいかないページは、Claude に決まった形（JSON）に直してもらって貼り付ける */
+const AI_FORMAT = 'syukatsu-posting-v1';
+const AI_RAW_KEY = 'syukatsu.aiRaw'; // Claude に渡した原文（答えを貼ったときに「原文」欄に戻す）
+const AI_TEXT_KEYS = ['title', 'job', 'location', 'eligibility', 'startDate', 'contract', 'probation', 'hours', 'holidaysNote',
+  'salaryNote', 'bonusNote', 'raise', 'benefits', 'allowances', 'commute', 'note'];
+function aiPrompt(text, url) {
+  const p = state.profile;
+  const deg = DEGREES[p.degree]?.label || '大学院（修士）';
+  const example = {
+    format: AI_FORMAT, company: '株式会社〇〇', hq: '東京都港区', locations: '東京、大阪',
+    jobs: [{
+      title: 'システムエンジニア', job: '仕事内容の説明', location: 'この職種の勤務地（会社全体と同じなら空）',
+      salary: 300000, annual: null, bonus: 5.2, holidays: 125, overtime: 20, housing: 30000, hiring: 50,
+      flex: true, remote: false, discretionary: false, prevYear: false,
+      salaryNote: '修士 300,000円\n学士 280,000円', eligibility: '', startDate: '', contract: '', probation: '', hours: '',
+      holidaysNote: '', bonusNote: '', raise: '', benefits: '', allowances: '', commute: '', note: '選考の流れ・提出書類など',
+    }],
+  };
+  return `次の新卒採用の募集要項を、就活管理アプリに取り込むためのJSONに変換してください。
+
+ルール
+- 答えは \`\`\`json のコードブロック1つだけ。説明の文章は不要です。
+- 書かれていないことは推測せず "" か null にしてください。
+- 職種が複数あるときは jobs に職種ごとに分けてください（条件が同じでも職種名ごとに1つ）。
+- salary：私（${deg}・${p.gradYear}年卒）に当てはまる月額の初任給を円の整数で。学歴で違うなら私の学歴の額。年俸制なら null にして annual に入れる。
+- annual：想定年収・年俸（万円の整数）／bonus：賞与の月数（数値）／holidays：年間休日（日）／overtime：月平均残業（時間）／housing：住宅手当・家賃補助の月額（円）／hiring：採用予定人数
+- flex：フレックスあり、remote：在宅・リモート勤務あり、discretionary：裁量労働制
+- prevYear：${p.gradYear}年卒向けではなく前年度（${p.gradYear - 1}年卒向け）の内容なら true
+- 文章の項目は原文の言葉のまま、改行は \\n で。「（雇入れ直後）」「（変更の範囲）」のような法律の決まり文句は省いてかまいません。
+
+形の例
+\`\`\`json
+${JSON.stringify(example, null, 1)}
+\`\`\`
+
+${text ? `募集要項${url ? `（${url}）` : ''}\n"""\n${text.trim()}\n"""` : `募集要項のページ：${url}\nこのページ（と、そこからリンクされている募集要項のページ）を読んで変換してください。`}`;
+}
+function parseAiPosting(raw) {
+  if (!raw.includes(AI_FORMAT) && !/"jobs"\s*:/.test(raw)) return null;
+  const block = (raw.match(/```(?:json)?\s*([\s\S]*?)```/) || [])[1] || raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1);
+  try {
+    const o = JSON.parse(block);
+    return o && Array.isArray(o.jobs) && o.jobs.length ? o : null;
+  } catch { return null; }
+}
+async function applyAiPosting(o) {
+  const jobs = o.jobs.map((j, i) => ({ ...j, name: str(j.title).trim() || `職種${i + 1}`, desc: str(j.job).slice(0, 60) }));
+  let sel = jobs.slice(0, 1);
+  if (jobs.length > 1 && editing.postings.length === 1 && !cForm.p_title.value.trim()) {
+    const picked = await pickJobs(jobs, true);
+    if (picked) sel = jobs.filter(j => picked.includes(j.name));
+  }
+  const orig = sessionStorage.getItem(AI_RAW_KEY) || '';
+  const setIf = (n, v) => { if (v != null && String(v).trim() !== '') cForm[n].value = v; };
+  if (!cForm.name.value.trim()) { setIf('name', str(o.company).trim()); updateIndustryUi(); }
+  if (!cForm.hq.value.trim()) setIf('hq', o.hq);
+  if (!cForm.locations.value.trim()) setIf('locations', o.locations);
+  const results = [];
+  sel.forEach((j, i) => {
+    if (i > 0) addPosting(false);
+    AI_TEXT_KEYS.forEach(k => setIf('p_' + k, k === 'title' && jobs.length === 1 ? (j.title || '') : k === 'title' ? j.name : j[k]));
+    POSTING_NUM.forEach(k => {
+      const v = Number(j[k]);
+      if (j[k] != null && j[k] !== '' && Number.isFinite(v) && v > 0) cForm['p_' + k].value = v;
+    });
+    POSTING_FLAGS.forEach(f => { if (j[f.key]) cForm['p_' + f.key].checked = true; });
+    cForm.p_prevYear.checked = Boolean(j.prevYear);
+    if (orig) cForm.p_raw.value = orig;
+    savePostingForm();
+    results.push({ job: j.name, salary: Number(cForm.p_salary.value) || null });
+  });
+  if (!orig) cForm.p_raw.value = '';
+  sessionStorage.removeItem(AI_RAW_KEY);
+  renderPostingTabs();
+  showSalaryCandidates();
+  updateYenPreviews();
+  updateTokyoHint();
+  if (!$('#industry-select').value) {
+    const g = guessIndustries(industryGuessText())[0];
+    if (g) setIndustry(g.name);
+  } else updateIndustryUi();
+  if (results.length > 1) finishMultiJobs(results);
+  else {
+    $('#posting-section').open = true;
+    toast('Claude で整えた内容を入力しました。確認して保存してください');
+  }
+  $('#ai-steps').hidden = true;
+}
+async function startAiPosting() {
+  let text = cForm.p_raw.value.trim();
+  if (parseAiPosting(text)) text = '';
+  const url = $('#posting-url').value.trim();
+  if (!text && !url) {
+    try { text = (await navigator.clipboard.readText()).trim(); } catch { /* 許可されないときは下で案内 */ }
+    const clip = text && splitClip(text);
+    if (clip) text = clip.text;
+  }
+  if (!text && !url) { toast('先に募集要項をコピーするか、上の欄に URL を入れてください'); return; }
+  sessionStorage.setItem(AI_RAW_KEY, text);
+  const prompt = aiPrompt(text, url);
+  try { await navigator.clipboard.writeText(prompt); }
+  catch { window.prompt('次の文をコピーしてください', prompt); }
+  $('#ai-steps').hidden = false;
+  toast('Claude への依頼文をコピーしました');
+}
+$('#ai-posting').addEventListener('click', startAiPosting);
+
 /* 「戦略コンサルタント職（RDE）」→ 説明文 → 給与・勤務地…のように、職種ごとに区切られたページ */
 const JOB_HEAD_RE = /^[^\s。、，,：:※・]{2,22}(?:職|コース|部門|エンジニア|コンサルタント)(?:\s*[（(][^（(）)]{1,15}[）)])?$/;
 function jobBlocks(raw) {
@@ -1477,6 +1603,7 @@ async function applyJobBlocks(raw, blocks, auto) {
 }
 /** 募集要項のテキストを、いま選んでいる職種の欄に読み取って入れる */
 function fillPostingFromText(raw, auto = false, opts = {}) {
+  raw = prepPosting(raw);
   const parsed = parsePosting(raw);
   // 「初任給」の見出しがなく「月額基本給：459,084円」のように書かれているとき
   if (!parsed.salaryNote) {
@@ -1530,7 +1657,7 @@ function fillPostingFromText(raw, auto = false, opts = {}) {
   if (housing[1]) values.p_housing = toYen(housing[1], housing[2]);
   const bonus = (parsed.bonusNote || '').match(/(\d+(?:\.\d+)?)\s*(?:ヶ月|か月|カ月|ヵ月|ケ月)/);
   if (bonus) values.p_bonus = bonus[1];
-  const hol = raw.match(/年間休日[^\d\n]{0,10}(\d{2,3})\s*日/);
+  const hol = raw.match(/年間休日[^\n]{0,15}?(\d{2,3})\s*日/);
   if (hol) values.p_holidays = hol[1];
   const ot = raw.match(/(?:月平均)?残業[^\d\n]{0,10}(\d{1,3}(?:\.\d)?)\s*時間/);
   if (ot) values.p_overtime = ot[1];
@@ -1543,7 +1670,8 @@ function fillPostingFromText(raw, auto = false, opts = {}) {
     if (pr) values.p_probation = pr[0].replace(/[。、\s]+$/, '');
   }
   if (!cForm.hq.value && !values.hq) {
-    const line = (parsed.locations || '').split('\n').find(l => /本社/.test(l));
+    // 「本社(東京)、北海道、岩手、…」のような勤務地の一覧は本社所在地ではない
+    const line = (parsed.locations || '').split('\n').find(l => /本社/.test(l) && l.length <= 40 && (l.match(/[、,]/g) || []).length < 2);
     if (line) values.hq = line;
   }
   const flags = {
