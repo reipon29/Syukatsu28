@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '2.19.3';
+const APP_VERSION = '2.20.0';
 const STORAGE_KEY = 'syukatsu.v1';
 
 const STATUSES = [
@@ -464,7 +464,40 @@ $('#industry-select').innerHTML = '<option value="">わからない・未設定<
   INDUSTRY_GROUPS.map(g => `<optgroup label="${g.group}">${g.items.map(it => `<option value="${it.name}">${it.name}</option>`).join('')}</optgroup>`).join('') +
   '<option value="__other">その他（自分で入力）</option>';
 
-const uiControls = ['#filter-status', '#sort', '#filter-tokyo', '#cmp-metric', '#cmp-filter', '#filter-industry', '#cmp-industry'];
+// 職種の分類（比較で同じ職種どうしを並べるため。上から順に判定）
+const JOB_KINDS = [
+  { key: 'consult', label: 'コンサルタント',       re: /コンサル/ },
+  { key: 'sales',   label: '営業',                 re: /営業|セールス|MR\b|販売/i },
+  { key: 'it',      label: 'IT・エンジニア',       re: /エンジニア|SE\b|システム|\bIT|ＩＴ|プログラ|ソフトウェア|インフラ|データ|デジタル|DX|アプリ|Web|ネットワーク|情報/i },
+  { key: 'rd',      label: '研究・開発・技術',     re: /研究|開発|設計|技術|生産|品質|製造|R&D|機械|電気|電子|化学/i },
+  { key: 'plan',    label: '企画・マーケティング', re: /企画|マーケ|商品|広報|宣伝|デザイン/ },
+  { key: 'corp',    label: '事務・管理部門',       re: /事務|管理|経理|財務|人事|総務|法務|コーポレート|スタッフ/ },
+  { key: 'general', label: '総合職',               re: /総合職|オープン|ゼネラル/ },
+];
+/** 職種名（なければ仕事内容）から職種の分類を決める */
+function jobKind(p) {
+  for (const text of [p.title, p.job]) {
+    if (!text) continue;
+    const k = JOB_KINDS.find(k => k.re.test(text));
+    if (k) return k.key;
+  }
+  return 'other';
+}
+const jobKindLabel = key => JOB_KINDS.find(k => k.key === key)?.label || 'その他・未分類';
+function fillJobKindFilter() {
+  const el = $('#cmp-job');
+  const cur = el.value || el.dataset.pref || 'all';
+  const count = {};
+  state.companies.forEach(c => c.postings.forEach(p => {
+    if (postingHasData(p)) { const k = jobKind(p); count[k] = (count[k] || 0) + 1; }
+  }));
+  el.innerHTML = '<option value="all">職種: すべて</option>' +
+    [...JOB_KINDS.map(k => k.key), 'other'].filter(k => count[k])
+      .map(k => `<option value="${k}">職種: ${jobKindLabel(k)}（${count[k]}）</option>`).join('');
+  el.value = [...el.options].some(o => o.value === cur) ? cur : 'all';
+}
+
+const uiControls = ['#filter-status', '#sort', '#filter-tokyo', '#cmp-metric', '#cmp-filter', '#filter-industry', '#cmp-industry', '#cmp-job'];
 try {
   const pref = JSON.parse(localStorage.getItem(UI_KEY) || '{}');
   uiControls.forEach(sel => { if (pref[sel] != null) { $(sel).value = pref[sel]; $(sel).dataset.pref = pref[sel]; } });
@@ -672,15 +705,18 @@ function compareTargets() {
   const f = $('#cmp-filter').value;
   const tokyoOnly = $('#cmp-tokyo').checked;
   const fi = $('#cmp-industry').value;
+  const fj = $('#cmp-job').value || 'all';
   const rows = [];
   state.companies
     .filter(c => (f === 'all' || ACTIVE_STATUSES.has(c.status)) && matchIndustry(c, fi))
     .forEach(c => c.postings.forEach((p, i) => {
       if (!postingHasData(p)) return;
+      const kind = jobKind(p);
+      if (fj !== 'all' && kind !== fj) return;
       const tk = postingTokyo(c, p);
       if (tokyoOnly && !matchTokyoCode(tk, 'ok')) return;
       const multi = c.postings.filter(postingHasData).length > 1;
-      rows.push({ c, p, tk, title: p.title || (multi ? postingTitle(p, i) : '') });
+      rows.push({ c, p, tk, kind, title: p.title || (multi ? postingTitle(p, i) : '') });
     }));
   return rows;
 }
@@ -694,11 +730,16 @@ const rowText = r => r.c.name + (r.title ? `（${r.title}）` : '');
 function renderCompare() {
   renderBulkBanner();
   fillIndustryFilters();
+  fillJobKindFilter();
   const metric = CMP_METRICS.find(m => m.key === $('#cmp-metric').value) || CMP_METRICS[0];
   const rows = compareTargets().map(r => ({ ...r, p: { ...r.p, net: netMonthly(r.p) } }));
   const hasAny = rows.length > 0;
 
+  const fj = $('#cmp-job').value;
   $('#cmp-empty').hidden = hasAny;
+  $('#cmp-empty').innerHTML = fj && fj !== 'all' && state.companies.some(c => c.postings.some(postingHasData))
+    ? `「${esc(jobKindLabel(fj))}」の職種は、いまの条件では見つかりません。<br>職種・対象・業界の絞り込みを変えてみてください。`
+    : '募集要項が入力された企業がありません。<br>企業の詳細の「🔎 募集要項を探す」か、編集画面への貼り付けで入力すると、初任給・休日などを並べて比較できます。';
   $$('#view-compare .panel').forEach(p => { p.hidden = !hasAny; });
   if (!hasAny) return;
 
@@ -711,7 +752,7 @@ function renderCompare() {
   const withVal = rows.filter(r => val(r) != null).sort(cmp);
   const missing = rows.filter(r => val(r) == null);
 
-  $('#cmp-title').textContent = `${metric.label}（${metric.unit}）`;
+  $('#cmp-title').textContent = `${metric.label}（${metric.unit}）${fj && fj !== 'all' ? ' ― ' + jobKindLabel(fj) : ''}`;
   $('#cmp-sub').textContent = metric.better === 'low' ? '少ない順に表示' : '多い順に表示';
   const max = Math.max(...withVal.map(val), 0);
   $('#cmp-chart').innerHTML = withVal.length ? withVal.map(r => {
@@ -735,9 +776,10 @@ function renderCompare() {
     if (vals.length >= 2) best[m.key] = m.better === 'low' ? Math.min(...vals) : Math.max(...vals);
   });
   $('#cmp-table').innerHTML =
-    `<thead><tr><th>企業／職種</th><th>東京</th>${CMP_METRICS.map(m => `<th>${m.label}</th>`).join('')}<th>働き方</th><th>勤務地</th><th>本社</th></tr></thead>
+    `<thead><tr><th>企業／職種</th><th>職種の分類</th><th>東京</th>${CMP_METRICS.map(m => `<th>${m.label}</th>`).join('')}<th>働き方</th><th>勤務地</th><th>本社</th></tr></thead>
     <tbody>${sorted.map(r => `<tr data-id="${r.c.id}" data-pid="${r.p.id}">
       <td>${rowLabel(r)}</td>
+      <td class="l">${esc(jobKindLabel(r.kind))}</td>
       <td class="l">${TOKYO[r.tk]?.badge || '-'}</td>
       ${CMP_METRICS.map(m => {
         const v = r.p[m.key];
