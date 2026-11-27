@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '2.16.0';
+const APP_VERSION = '2.17.0';
 const STORAGE_KEY = 'syukatsu.v1';
 
 const STATUSES = [
@@ -1391,8 +1391,14 @@ async function applyPosting(auto = false) {
   const raw = cForm.p_raw.value;
   if (!raw.trim()) { if (!auto) toast('募集要項のテキストを貼り付けてください'); return; }
   const allJobText = parsePosting(raw).job;
-  const jobs = editing.postings.length === 1 && !cForm.p_title.value.trim() ? detectJobs(allJobText) : [];
-  if (!jobs.length) { fillPostingFromText(raw, auto); return; }
+  const canSplit = editing.postings.length === 1 && !cForm.p_title.value.trim();
+  const jobs = canSplit ? detectJobs(allJobText) : [];
+  if (!jobs.length) {
+    const blocks = canSplit ? jobBlocks(raw) : [];
+    if (blocks.length) await applyJobBlocks(raw, blocks, auto);
+    else fillPostingFromText(raw, auto);
+    return;
+  }
 
   // 「募集職種」の一覧の行そのものは、職種ごとに違う条件とはみなさない
   const listLines = new Set(jobLines(allJobText).map(j => j.line));
@@ -1419,16 +1425,70 @@ async function applyPosting(auto = false) {
     cForm.p_job.value = jobText(job, allJobText);
     cForm.p_raw.value = raw;
   });
+  finishMultiJobs(results);
+}
+function finishMultiJobs(results) {
   switchPosting(0);
   $('#posting-section').open = true;
   const sal = results.map(r => `${r.job} ${r.salary ? r.salary.toLocaleString('ja-JP') + '円' : '初任給なし'}`).join(' / ');
-  toast(`${picked.length}つの職種に分けて入力しました（${sal}）。タブで切り替えて確認してください`);
+  toast(`${results.length}つの職種に分けて入力しました（${sal}）。タブで切り替えて確認してください`);
   const later = [...new Set(results.flatMap(r => r.later || []).filter(m => !/^初任給/.test(m)))];
   later.forEach((m, i) => setTimeout(() => toast(m), 2500 * (i + 1)));
+}
+
+/* 「戦略コンサルタント職（RDE）」→ 説明文 → 給与・勤務地…のように、職種ごとに区切られたページ */
+const JOB_HEAD_RE = /^[^\s。、，,：:※・]{2,22}(?:職|コース|部門|エンジニア|コンサルタント)(?:\s*[（(][^（(）)]{1,15}[）)])?$/;
+function jobBlocks(raw) {
+  const lines = raw.replace(/\r/g, '').split('\n').map(l => l.trim()).filter(Boolean);
+  const heads = [];
+  lines.forEach((l, i) => {
+    if (!JOB_HEAD_RE.test(l) || matchLabel(l) || isStop(l)) return;
+    // 見出しのすぐ下に説明の文章がある（ただの職種の一覧とは区別する）
+    const next = lines[i + 1] || '';
+    if (next.length >= 30 && !JOB_HEAD_RE.test(next)) heads.push(i);
+  });
+  if (heads.length < 2 || heads.length > 10) return [];
+  const maxSize = Math.max(...heads.slice(1).map((h, k) => h - heads[k]));
+  return heads.map((h, k) => {
+    let body = lines.slice(h + 1, k + 1 < heads.length ? heads[k + 1] : h + maxSize);
+    const stop = body.findIndex(l => isStop(l) || /^(?:関連情報|関連リンク)$/.test(l));
+    if (stop > 0) body = body.slice(0, stop);
+    const intro = body[0];
+    return { name: lines[h], desc: intro.length > 60 ? intro.slice(0, 60) + '…' : intro, intro, body: body.join('\n') };
+  });
+}
+async function applyJobBlocks(raw, blocks, auto) {
+  const picked = await pickJobs(blocks, true);
+  if (!picked) { fillPostingFromText(raw, auto); return; }
+  const sel = blocks.filter(b => picked.includes(b.name));
+  if (sel.length === 1) {
+    fillPostingFromText(sel[0].body, auto, { title: sel[0].name });
+    cForm.p_job.value = sel[0].intro;
+    return;
+  }
+  const results = [];
+  sel.forEach((b, i) => {
+    if (i > 0) addPosting(false);
+    results.push({ job: b.name, ...fillPostingFromText(b.body, auto, { title: b.name, quiet: true, perPosting: true }) });
+    cForm.p_job.value = b.intro;
+    cForm.p_raw.value = raw;
+  });
+  finishMultiJobs(results);
 }
 /** 募集要項のテキストを、いま選んでいる職種の欄に読み取って入れる */
 function fillPostingFromText(raw, auto = false, opts = {}) {
   const parsed = parsePosting(raw);
+  // 「初任給」の見出しがなく「月額基本給：459,084円」のように書かれているとき
+  if (!parsed.salaryNote) {
+    const ls = raw.split('\n').map(l => l.trim());
+    const pick = [];
+    ls.forEach((l, i) => {
+      if (!/(?:年収|基本給|月給|初任給|給与)[^\n]*?\d[\d,.]*\s*万?\s*円/.test(l)) return;
+      pick.push(l);
+      for (let j = i + 1; j < ls.length && /^※/.test(ls[j]) && /金額|給|支給|手当|改定/.test(ls[j]); j++) pick.push(ls[j]);
+    });
+    if (pick.length) parsed.salaryNote = [...new Set(pick)].join('\n');
+  }
   const values = {}; // フォーム要素名 → 値
   for (const [field, text] of Object.entries(parsed)) {
     // 職種が複数あるときは、その職種の勤務地として入れる
