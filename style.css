@@ -923,3 +923,11 @@ dialog > *, dialog form > * { min-width: 0; max-width: 100%; }
 .ai-box { margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--border); display: grid; gap: 8px; }
 .ai-steps { margin: 0; padding-left: 1.4em; display: grid; gap: 4px; background: var(--accent-soft); border-radius: 10px; padding: 10px 12px 10px 2em; }
 .ai-steps a { color: var(--accent); font-weight: 700; }
+.ai-steps { background: var(--surface-2); padding: 10px 12px 10px 2em; }
+.ai-steps .link { padding: 0; }
+.ai-quick { display: grid; gap: 6px; padding-bottom: 14px; margin-bottom: 14px; border-bottom: 1px solid var(--border); }
+.ai-quick .link, .ai-steps .link { color: var(--accent); font-weight: 700; background: none; border: 0; cursor: pointer; font-size: inherit; text-decoration: underline; }
+.ai-template-text { width: 100%; margin-top: 10px; font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+.backup-list { list-style: none; padding: 0; margin: 8px 0; display: grid; gap: 6px; }
+.backup-list li { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 14px; }
+.backup-list small { color: var(--muted); margin-left: 6px; }

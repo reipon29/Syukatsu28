@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '2.18.0';
+const APP_VERSION = '2.19.0';
 const STORAGE_KEY = 'syukatsu.v1';
 
 const STATUSES = [
@@ -121,7 +121,8 @@ function normalizeCompany(c) {
     tokyo: TOKYO[c.tokyo] ? c.tokyo : '',
     route: str(c.route),
     url: str(c.url),
-    site: str(c.site), // 採用サイト（募集要項を探すときの起点）
+    site: str(c.site), // 採用サイト
+    homepage: str(c.homepage), // 公式ホームページ
     loginId: str(c.loginId),
     pwd: normalizePwd(c.pwd),
     postings,
@@ -202,6 +203,7 @@ function save() {
     alert('保存に失敗しました: ' + e.message);
   }
   if (typeof scheduleCalPush === 'function') scheduleCalPush();
+  if (typeof cloudAfterSave === 'function') cloudAfterSave();
 }
 
 /* ---------- helpers ---------- */
@@ -901,10 +903,8 @@ function openCompany(id, postingId) {
   const src = id ? state.companies.find(c => c.id === id) : null;
   editing = src ? structuredClone(src) : normalizeCompany({ name: '', status: 'entry', createdAt: Date.now() });
   $('#company-dialog-title').textContent = src ? '企業を編集' : '企業を追加';
-  ['name', 'status', 'hq', 'locations', 'tokyo', 'url', 'loginId', 'memo'].forEach(k => { cForm[k].value = editing[k]; });
+  ['name', 'status', 'hq', 'locations', 'tokyo', 'url', 'homepage', 'loginId', 'memo'].forEach(k => { cForm[k].value = editing[k]; });
   $('#posting-url').value = editing.site;
-  $('#posting-fetch-status').textContent = '';
-  updateFetchUi();
   setIndustry(editing.industry);
   if (!editing.postings.length) editing.postings.push(normalizePosting());
   curPosting = Math.max(0, editing.postings.findIndex(p => p.id === postingId));
@@ -1078,7 +1078,7 @@ cForm.p_title.addEventListener('input', renderPostingTabs);
 cForm.p_applied.addEventListener('change', renderPostingTabs);
 
 function readCompanyForm() {
-  ['name', 'hq', 'locations', 'url', 'loginId'].forEach(k => { editing[k] = cForm[k].value.trim(); });
+  ['name', 'hq', 'locations', 'url', 'homepage', 'loginId'].forEach(k => { editing[k] = cForm[k].value.trim(); });
   editing.site = $('#posting-url').value.trim();
   editing.industry = currentIndustry();
   editing.status = cForm.status.value;
@@ -1140,6 +1140,7 @@ $('#delete-company').addEventListener('click', () => {
   if (!confirm(`「${editing.name}」を削除しますか？\n登録した予定やログイン情報も削除されます。`)) return;
   state.companies = state.companies.filter(c => c.id !== editing.id);
   gsyncIgnore(editing); // Gmail同期で復活しないようにする
+  cloudTomb(editing.id); // ほかの端末のデータと統合しても復活しないようにする
   save();
   cDialog.close();
   toast('削除しました');
@@ -1454,52 +1455,73 @@ function finishMultiJobs(results) {
   later.forEach((m, i) => setTimeout(() => toast(m), 2500 * (i + 1)));
 }
 
-/* ---- Claude で整形してから入力 ----
-   自動の読み取りがうまくいかないページは、Claude に決まった形（JSON）に直してもらって貼り付ける */
+/* ---- Claude で整えた答えを貼り付けて入力 ----
+   「入力の型」を Claude に渡して募集要項を決まった形（JSON）にしてもらい、その答えを貼るだけで入力する */
 const AI_FORMAT = 'syukatsu-posting-v1';
-const AI_RAW_KEY = 'syukatsu.aiRaw'; // Claude に渡した原文（答えを貼ったときに「原文」欄に戻す）
 const AI_TEXT_KEYS = ['title', 'job', 'location', 'eligibility', 'startDate', 'contract', 'probation', 'hours', 'holidaysNote',
   'salaryNote', 'bonusNote', 'raise', 'benefits', 'allowances', 'commute', 'note'];
-function aiPrompt(text, url) {
+function aiTemplate() {
   const p = state.profile;
   const deg = DEGREES[p.degree]?.label || '大学院（修士）';
   const example = {
-    format: AI_FORMAT, company: '株式会社〇〇', hq: '東京都港区', locations: '東京、大阪',
+    format: AI_FORMAT, company: '株式会社〇〇', homepage: 'https://www.example.co.jp/', recruitUrl: 'https://recruit.example.co.jp/',
+    hq: '東京都港区', locations: '東京、大阪',
     jobs: [{
-      title: 'システムエンジニア', job: '仕事内容の説明', location: 'この職種の勤務地（会社全体と同じなら空）',
+      title: 'システムエンジニア', job: '仕事内容の説明', location: '',
       salary: 300000, annual: null, bonus: 5.2, holidays: 125, overtime: 20, housing: 30000, hiring: 50,
       flex: true, remote: false, discretionary: false, prevYear: false,
       salaryNote: '修士 300,000円\n学士 280,000円', eligibility: '', startDate: '', contract: '', probation: '', hours: '',
       holidaysNote: '', bonusNote: '', raise: '', benefits: '', allowances: '', commute: '', note: '選考の流れ・提出書類など',
     }],
   };
-  return `次の新卒採用の募集要項を、就活管理アプリに取り込むためのJSONに変換してください。
+  return `【就活管理アプリ 入力の型】
+送られてきた新卒採用の募集要項を、次の形のJSONに変換してください。
 
 ルール
-- 答えは \`\`\`json のコードブロック1つだけ。説明の文章は不要です。
-- 書かれていないことは推測せず "" か null にしてください。
+- 答えは \`\`\`json のコードブロックだけ。説明の文章は不要です。
+- 書かれていないことは推測せず "" か null にしてください（homepage と recruitUrl は、会社の公式サイト・採用サイトの URL が確実にわかるときだけ）。
 - 職種が複数あるときは jobs に職種ごとに分けてください（条件が同じでも職種名ごとに1つ）。
+- 複数の会社の募集要項が送られてきたら、会社ごとに別のコードブロックにしてください。
 - salary：私（${deg}・${p.gradYear}年卒）に当てはまる月額の初任給を円の整数で。学歴で違うなら私の学歴の額。年俸制なら null にして annual に入れる。
 - annual：想定年収・年俸（万円の整数）／bonus：賞与の月数（数値）／holidays：年間休日（日）／overtime：月平均残業（時間）／housing：住宅手当・家賃補助の月額（円）／hiring：採用予定人数
+- location：その職種だけの勤務地（会社全体の locations と同じなら ""）
 - flex：フレックスあり、remote：在宅・リモート勤務あり、discretionary：裁量労働制
 - prevYear：${p.gradYear}年卒向けではなく前年度（${p.gradYear - 1}年卒向け）の内容なら true
 - 文章の項目は原文の言葉のまま、改行は \\n で。「（雇入れ直後）」「（変更の範囲）」のような法律の決まり文句は省いてかまいません。
 
-形の例
+形
 \`\`\`json
 ${JSON.stringify(example, null, 1)}
-\`\`\`
-
-${text ? `募集要項${url ? `（${url}）` : ''}\n"""\n${text.trim()}\n"""` : `募集要項のページ：${url}\nこのページ（と、そこからリンクされている募集要項のページ）を読んで変換してください。`}`;
+\`\`\``;
 }
-function parseAiPosting(raw) {
-  if (!raw.includes(AI_FORMAT) && !/"jobs"\s*:/.test(raw)) return null;
-  const block = (raw.match(/```(?:json)?\s*([\s\S]*?)```/) || [])[1] || raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1);
-  try {
-    const o = JSON.parse(block);
-    return o && Array.isArray(o.jobs) && o.jobs.length ? o : null;
-  } catch { return null; }
+/** 貼り付けた文から、入力の型の JSON をすべて取り出す */
+function parseAiAll(raw) {
+  if (!raw || (!raw.includes(AI_FORMAT) && !/"jobs"\s*:/.test(raw))) return [];
+  const blocks = [...raw.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)].map(m => m[1]);
+  if (!blocks.length) blocks.push(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1));
+  const out = [];
+  for (const b of blocks) {
+    try {
+      const o = JSON.parse(b);
+      for (const x of Array.isArray(o) ? o : Array.isArray(o.companies) ? o.companies : [o]) {
+        if (x && Array.isArray(x.jobs) && x.jobs.length) out.push(x);
+      }
+    } catch { /* 形が崩れているブロックは飛ばす */ }
+  }
+  return out;
 }
+const parseAiPosting = raw => parseAiAll(raw)[0] || null;
+const aiNum = v => { const n = Number(v); return v != null && v !== '' && Number.isFinite(n) && n > 0 ? n : null; };
+/** 入力の型の1職種 → アプリの職種データ */
+function aiPostingData(j, single) {
+  const d = { prevYear: Boolean(j.prevYear) };
+  AI_TEXT_KEYS.forEach(k => { d[k] = str(j[k]).trim(); });
+  if (single && !d.title) d.title = '';
+  POSTING_NUM.forEach(k => { d[k] = aiNum(j[k]); });
+  POSTING_FLAGS.forEach(f => { d[f.key] = Boolean(j[f.key]); });
+  return d;
+}
+/** 編集画面に入力（貼り付けた答えが1社分のとき） */
 async function applyAiPosting(o) {
   const jobs = o.jobs.map((j, i) => ({ ...j, name: str(j.title).trim() || `職種${i + 1}`, desc: str(j.job).slice(0, 60) }));
   let sel = jobs.slice(0, 1);
@@ -1507,27 +1529,24 @@ async function applyAiPosting(o) {
     const picked = await pickJobs(jobs, true);
     if (picked) sel = jobs.filter(j => picked.includes(j.name));
   }
-  const orig = sessionStorage.getItem(AI_RAW_KEY) || '';
-  const setIf = (n, v) => { if (v != null && String(v).trim() !== '') cForm[n].value = v; };
-  if (!cForm.name.value.trim()) { setIf('name', str(o.company).trim()); updateIndustryUi(); }
+  const setIf = (n, v) => { if (v != null && String(v).trim() !== '') cForm[n].value = String(v).trim(); };
+  if (!cForm.name.value.trim()) setIf('name', o.company);
   if (!cForm.hq.value.trim()) setIf('hq', o.hq);
   if (!cForm.locations.value.trim()) setIf('locations', o.locations);
+  if (!cForm.homepage.value.trim() && safeUrl(o.homepage)) setIf('homepage', o.homepage);
+  if (!$('#posting-url').value.trim() && safeUrl(o.recruitUrl)) $('#posting-url').value = o.recruitUrl;
   const results = [];
   sel.forEach((j, i) => {
     if (i > 0) addPosting(false);
-    AI_TEXT_KEYS.forEach(k => setIf('p_' + k, k === 'title' && jobs.length === 1 ? (j.title || '') : k === 'title' ? j.name : j[k]));
-    POSTING_NUM.forEach(k => {
-      const v = Number(j[k]);
-      if (j[k] != null && j[k] !== '' && Number.isFinite(v) && v > 0) cForm['p_' + k].value = v;
-    });
-    POSTING_FLAGS.forEach(f => { if (j[f.key]) cForm['p_' + f.key].checked = true; });
-    cForm.p_prevYear.checked = Boolean(j.prevYear);
-    if (orig) cForm.p_raw.value = orig;
+    const d = aiPostingData(j, jobs.length === 1);
+    AI_TEXT_KEYS.forEach(k => { if (d[k]) cForm['p_' + k].value = d[k]; });
+    POSTING_NUM.forEach(k => { if (d[k] != null) cForm['p_' + k].value = d[k]; });
+    POSTING_FLAGS.forEach(f => { if (d[f.key]) cForm['p_' + f.key].checked = true; });
+    cForm.p_prevYear.checked = d.prevYear;
+    cForm.p_raw.value = '';
     savePostingForm();
     results.push({ job: j.name, salary: Number(cForm.p_salary.value) || null });
   });
-  if (!orig) cForm.p_raw.value = '';
-  sessionStorage.removeItem(AI_RAW_KEY);
   renderPostingTabs();
   showSalaryCandidates();
   updateYenPreviews();
@@ -1539,28 +1558,77 @@ async function applyAiPosting(o) {
   if (results.length > 1) finishMultiJobs(results);
   else {
     $('#posting-section').open = true;
-    toast('Claude で整えた内容を入力しました。確認して保存してください');
+    toast('入力しました。内容を確認して保存してください');
   }
-  $('#ai-steps').hidden = true;
 }
-async function startAiPosting() {
-  let text = cForm.p_raw.value.trim();
-  if (parseAiPosting(text)) text = '';
-  const url = $('#posting-url').value.trim();
-  if (!text && !url) {
-    try { text = (await navigator.clipboard.readText()).trim(); } catch { /* 許可されないときは下で案内 */ }
-    const clip = text && splitClip(text);
-    if (clip) text = clip.text;
+/** 編集画面の外で貼り付けたとき：1社なら編集画面で確認、複数社ならまとめて登録 */
+async function importAiAnswer(text) {
+  const list = parseAiAll(text);
+  if (!list.length) return false;
+  if (list.length === 1) {
+    const o = list[0];
+    const hit = state.companies.find(c => nameKey(c.name) === nameKey(o.company));
+    if (hit && hasPosting(hit) && !confirm(`「${hit.name}」はすでに募集要項が入っています。職種を追加しますか？`)) return true;
+    openCompany(hit ? hit.id : null);
+    if (hit && hasPosting(hit)) addPosting(false);
+    if (!hit) { cForm.status.value = 'interest'; }
+    await applyAiPosting(o);
+    $('.paste-box')?.scrollIntoView({ block: 'start' });
+    return true;
   }
-  if (!text && !url) { toast('先に募集要項をコピーするか、上の欄に URL を入れてください'); return; }
-  sessionStorage.setItem(AI_RAW_KEY, text);
-  const prompt = aiPrompt(text, url);
-  try { await navigator.clipboard.writeText(prompt); }
-  catch { window.prompt('次の文をコピーしてください', prompt); }
-  $('#ai-steps').hidden = false;
-  toast('Claude への依頼文をコピーしました');
+  let added = 0, updated = 0;
+  for (const o of list) {
+    const name = str(o.company).trim();
+    if (!name) continue;
+    const postings = o.jobs.map(j => normalizePosting(aiPostingData(j, o.jobs.length === 1)));
+    const hit = state.companies.find(c => nameKey(c.name) === nameKey(name));
+    if (hit) {
+      const titles = new Set(hit.postings.filter(postingHasData).map(p => p.title));
+      hit.postings = [...hit.postings.filter(postingHasData), ...postings.filter(p => !titles.has(p.title))];
+      ['hq', 'locations'].forEach(k => { if (!hit[k] && o[k]) hit[k] = str(o[k]); });
+      if (!hit.homepage && safeUrl(o.homepage)) hit.homepage = o.homepage;
+      if (!hit.site && safeUrl(o.recruitUrl)) hit.site = o.recruitUrl;
+      hit.updatedAt = Date.now();
+      updated++;
+    } else {
+      state.companies.push(normalizeCompany({ name, status: 'interest', hq: str(o.hq), locations: str(o.locations),
+        homepage: safeUrl(o.homepage), site: safeUrl(o.recruitUrl), postings, createdAt: Date.now(), updatedAt: Date.now() }));
+      added++;
+    }
+  }
+  save();
+  render();
+  toast(`Claude の答えから ${added}社 を追加、${updated}社 に職種を追加しました`);
+  return true;
 }
-$('#ai-posting').addEventListener('click', startAiPosting);
+async function copyAiTemplate() {
+  const t = aiTemplate();
+  try { await navigator.clipboard.writeText(t); toast('入力の型をコピーしました。Claude に貼り付けて、続けて募集要項を送ってください'); }
+  catch { window.prompt('次の文をコピーしてください', t); }
+}
+document.addEventListener('click', e => {
+  if (e.target.closest('[data-ai-template]')) copyAiTemplate();
+  if (e.target.closest('[data-ai-show]')) {
+    const box = $('#ai-template-text');
+    box.hidden = !box.hidden;
+    if (!box.hidden) box.value = aiTemplate();
+  }
+});
+$('#ai-paste-new').addEventListener('click', async () => {
+  let text = '';
+  try { text = await navigator.clipboard.readText(); } catch { toast('貼り付けを許可できませんでした。Ctrl+V（スマホは長押し）で貼り付けてください'); return; }
+  qDialog.close();
+  if (!(await importAiAnswer(text))) toast('コピーした内容に入力の型の答え（JSON）が見つかりませんでした');
+});
+// PC：画面のどこでも Ctrl+V で Claude の答えを貼り付けられる（入力欄の中は除く）
+document.addEventListener('paste', e => {
+  if (e.target.closest && e.target.closest('input, textarea, [contenteditable]')) return;
+  if (document.querySelector('dialog[open]')) return;
+  const text = e.clipboardData?.getData('text') || '';
+  if (!parseAiAll(text).length) return;
+  e.preventDefault();
+  importAiAnswer(text);
+});
 
 /* 「戦略コンサルタント職（RDE）」→ 説明文 → 給与・勤務地…のように、職種ごとに区切られたページ */
 const JOB_HEAD_RE = /^[^\s。、，,：:※・]{2,22}(?:職|コース|部門|エンジニア|コンサルタント)(?:\s*[（(][^（(）)]{1,15}[）)])?$/;
@@ -1902,23 +1970,25 @@ $('#export-btn').addEventListener('click', () => {
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 });
 
+function showImportPreview(data, label) {
+  if (!Array.isArray(data.companies)) throw new Error('形式が正しくありません');
+  const next = normalizeState(data);
+  const preview = mergeState(state, next);
+  const r = preview.report;
+  const when = data.exportedAt ? new Date(data.exportedAt).toLocaleString('ja-JP', { dateStyle: 'short', timeStyle: 'short' }) : '';
+  $('#import-summary').innerHTML =
+    `${esc(label)}${when ? `（${esc(when)}）` : ''}：企業 ${next.companies.length} 社・サービス ${next.accounts.length} 件・ESストック ${next.stock.length} 件<br>` +
+    `統合すると：新しい企業 <b>${r.added}</b> 社、内容が変わる企業 <b>${r.updated}</b> 社、変化なし ${r.same} 社` +
+    (r.otherAdded ? `、サービス・ESストック ${r.otherAdded} 件を追加` : '');
+  pendingImport = { next, merged: preview.state };
+  iDialog.showModal();
+}
 $('#import-file').addEventListener('change', async e => {
   const file = e.target.files[0];
   e.target.value = '';
   if (!file) return;
   try {
-    const data = JSON.parse(await file.text());
-    if (!Array.isArray(data.companies)) throw new Error('形式が正しくありません');
-    const next = normalizeState(data);
-    const preview = mergeState(state, next);
-    const r = preview.report;
-    const when = data.exportedAt ? new Date(data.exportedAt).toLocaleString('ja-JP', { dateStyle: 'short', timeStyle: 'short' }) : '';
-    $('#import-summary').innerHTML =
-      `ファイル${when ? `（${esc(when)} に書き出し）` : ''}：企業 ${next.companies.length} 社・サービス ${next.accounts.length} 件・ESストック ${next.stock.length} 件<br>` +
-      `統合すると：新しい企業 <b>${r.added}</b> 社、内容が変わる企業 <b>${r.updated}</b> 社、変化なし ${r.same} 社` +
-      (r.otherAdded ? `、サービス・ESストック ${r.otherAdded} 件を追加` : '');
-    pendingImport = { next, merged: preview.state };
-    iDialog.showModal();
+    showImportPreview(JSON.parse(await file.text()), 'ファイル');
   } catch (err) {
     alert('読み込みに失敗しました: ' + err.message);
   }
@@ -1967,7 +2037,7 @@ function mergeCompany(cur, inc) {
     events: unionById(cur.events, inc.events, pickNewer),
   };
   // 新しい方で空欄の項目は、古い方の値で補う
-  ['industry', 'hq', 'locations', 'tokyo', 'route', 'url', 'site', 'loginId', 'memo'].forEach(k => { if (!out[k] && older[k]) out[k] = older[k]; });
+  ['industry', 'hq', 'locations', 'tokyo', 'route', 'url', 'site', 'homepage', 'loginId', 'memo'].forEach(k => { if (!out[k] && older[k]) out[k] = older[k]; });
   if (!out.pwd && older.pwd) out.pwd = older.pwd;
   if (!out.postings.length) out.postings = newer.postings;
   const seen = new Set();
@@ -2082,6 +2152,7 @@ function loginActions(c) {
   const items = [];
   if (safeUrl(c.url)) items.push(`<a class="primary" href="${esc(c.url)}" target="_blank" rel="noopener">マイページを開く ↗</a>`);
   if (c.loginId) items.push(`<button data-act="copy-cid">IDコピー</button>`);
+  if (safeUrl(c.homepage)) items.push(`<a href="${esc(c.homepage)}" target="_blank" rel="noopener">🏠 ホームページ ↗</a>`);
   if (safeUrl(c.site)) items.push(`<a href="${esc(c.site)}" target="_blank" rel="noopener">採用サイト ↗</a>`);
   if (pwText(c.pwd)) items.push(`<button data-act="copy-cpw">PWコピー</button>`);
   if (acc) {
@@ -2904,8 +2975,6 @@ async function importPostingFromUrl(action) {
     btns.forEach(b => { if (gsyncConf().url) b.disabled = false; });
   }
 }
-$('#posting-find').addEventListener('click', () => importPostingFromUrl('find'));
-$('#posting-fetch').addEventListener('click', () => importPostingFromUrl('fetch'));
 
 /* ---------- 自分の条件・実質の月収・志望度スコア ---------- */
 /** その企業の代表の職種（応募した職種 → 初任給が分かる職種 → 何か入っている職種） */
@@ -3156,6 +3225,179 @@ $('#gcal-show').addEventListener('change', e => {
 });
 renderGcalOpts();
 
+/* ---------- PC とスマホで同じデータを使う（自分の Google ドライブに保存・自動バックアップ） ---------- */
+// 変更するたびに数秒後にドライブへ保存し、アプリを開いたとき・戻ってきたときに新しいデータを取ってくる。
+// 両方の端末で変更していたら（rev がずれていたら）統合してから保存し直す。
+var CLOUD_KEY = 'syukatsu.cloud';            // { on, rev, dirty, at, device }
+var CLOUD_TOMB_KEY = 'syukatsu.cloudTomb';   // この端末で削除した企業（統合で復活させない）
+var CLOUD_PREV_KEY = 'syukatsu.beforeCloud'; // ドライブの内容で置き換える直前のデータ（念のため）
+var cloudTimer = null, cloudBusy = false, cloudApplying = false, cloudSeq = 0;
+const DEVICE_NAME = /iPhone|iPad|iPod/.test(navigator.userAgent) ? 'iPhone' : /Android/.test(navigator.userAgent) ? 'Android' : 'PC';
+const cloudConf = () => { try { return JSON.parse(localStorage.getItem(CLOUD_KEY) || '{}'); } catch { return {}; } };
+const cloudSet = o => { try { localStorage.setItem(CLOUD_KEY, JSON.stringify({ ...cloudConf(), ...o })); } catch { /* ignore */ } };
+const cloudReady = () => Boolean(gsyncConf().url && cloudConf().on);
+function cloudTomb(id) {
+  try {
+    const t = JSON.parse(localStorage.getItem(CLOUD_TOMB_KEY) || '[]');
+    localStorage.setItem(CLOUD_TOMB_KEY, JSON.stringify([...t, id].slice(-300)));
+  } catch { /* ignore */ }
+}
+function cloudAfterSave() {
+  if (cloudApplying || !cloudConf().on) return;
+  cloudSeq++;
+  cloudSet({ dirty: true });
+  clearTimeout(cloudTimer);
+  cloudTimer = setTimeout(() => cloudPush(false), 3000);
+}
+async function cloudFetch(params, body) {
+  const base = gsyncConf().url;
+  const res = body
+    ? await fetch(base, { method: 'POST', body: JSON.stringify(body) })
+    : await fetch(`${base}&${params}`, { cache: 'no-store' });
+  const data = await res.json();
+  if (data.error === 'unauthorized') throw new Error('同期用 URL のトークンが違います');
+  if (data.ok === false && !data.conflict) throw new Error(data.error === 'unknown action' || !data.error ? 'Google のスクリプトが古いままです（v4 が必要）' : data.error);
+  if (data.ok === undefined && !data.conflict) throw new Error('Google のスクリプトが古いままです（v4 が必要）。最新のスクリプトを貼り付けて setup を実行し、「新バージョン」でデプロイしてください');
+  return data;
+}
+/** ドライブのデータとこの端末のデータを統合（この端末で消した企業は戻さない） */
+function cloudMerge(remote) {
+  let tomb = [];
+  try { tomb = JSON.parse(localStorage.getItem(CLOUD_TOMB_KEY) || '[]'); } catch { /* ignore */ }
+  const merged = mergeState(normalizeState(remote), state).state;
+  const dead = new Set(tomb);
+  merged.companies = merged.companies.filter(c => !dead.has(c.id));
+  return merged;
+}
+function cloudApply(next, rev, at, device) {
+  // 編集中の画面があるときは、閉じたあとに入れ替える
+  try { localStorage.setItem(CLOUD_PREV_KEY, JSON.stringify(state)); } catch { /* 容量不足のときは省く */ }
+  cloudApplying = true;
+  state = next;
+  save();
+  cloudApplying = false;
+  cloudSet({ rev, at, device });
+  render();
+}
+async function cloudPush(manual) {
+  if (!cloudReady()) return;
+  if (cloudBusy) { clearTimeout(cloudTimer); cloudTimer = setTimeout(() => cloudPush(manual), 2000); return; }
+  cloudBusy = true;
+  const seq = cloudSeq;
+  try {
+    for (let tries = 0; tries < 3; tries++) {
+      const d = await cloudFetch('', { action: 'save', baseRev: cloudConf().rev || 0, device: DEVICE_NAME, state });
+      if (d.conflict) {
+        // ほかの端末で先に変更されていた → 統合してから保存し直す
+        cloudApply(cloudMerge(d.state || { companies: [] }), d.rev, d.at, d.device);
+        continue;
+      }
+      cloudSet({ rev: d.rev, at: d.at, device: DEVICE_NAME, error: '' });
+      if (seq === cloudSeq) { cloudSet({ dirty: false }); localStorage.removeItem(CLOUD_TOMB_KEY); }
+      if (manual) toast('Google ドライブに保存しました');
+      break;
+    }
+  } catch (err) {
+    cloudSet({ error: cloudErrText(err) });
+    if (manual) alert('Google ドライブに保存できませんでした：' + cloudErrText(err));
+  } finally {
+    cloudBusy = false;
+    renderCloud();
+  }
+}
+const cloudErrText = err => {
+  const m = String(err && err.message || err);
+  return m === 'Failed to fetch' || m === 'Load failed' ? '通信できませんでした（オフライン、またはスクリプトが古い・ドライブの許可が済んでいない）' : m;
+};
+async function cloudPull(manual) {
+  if (!cloudReady() || cloudBusy || !navigator.onLine) return;
+  if (document.querySelector('dialog[open]')) return; // 編集中は入れ替えない
+  cloudBusy = true;
+  let pushAfter = false;
+  try {
+    const conf = cloudConf();
+    const d = await cloudFetch('action=load');
+    if (d.empty) pushAfter = true; // ドライブにまだ何もない → この端末のデータを保存
+    else if (d.rev !== conf.rev) {
+      if (!conf.rev) {
+        // この端末で初めて使う：両方のデータを統合（どちらも消さない）
+        cloudApply(cloudMerge(d.state), d.rev, d.at, d.device);
+        pushAfter = true;
+      } else if (conf.dirty) {
+        cloudApply(cloudMerge(d.state), d.rev, d.at, d.device);
+        pushAfter = true;
+      } else {
+        cloudApply(normalizeState(d.state), d.rev, d.at, d.device);
+        if (manual) toast(`${d.device || 'ほかの端末'}で変更した内容に更新しました`);
+      }
+    } else {
+      pushAfter = Boolean(conf.dirty);
+      if (manual && !pushAfter) toast('最新の状態です');
+    }
+    cloudSet({ error: '', checkedAt: Date.now() });
+  } catch (err) {
+    cloudSet({ error: cloudErrText(err) });
+    if (manual) alert('Google ドライブから読み込めませんでした：' + cloudErrText(err));
+  } finally {
+    cloudBusy = false;
+    renderCloud();
+  }
+  if (pushAfter) { cloudSeq++; cloudSet({ dirty: true }); await cloudPush(manual); }
+}
+function renderCloud() {
+  const conf = cloudConf();
+  const ready = Boolean(gsyncConf().url);
+  $('#cloud-on').checked = Boolean(conf.on);
+  $('#cloud-on').disabled = !ready;
+  $('#cloud-now').hidden = !conf.on;
+  $('#cloud-backups-box').hidden = !ready;
+  const fmt = t => new Date(t).toLocaleString('ja-JP', { dateStyle: 'short', timeStyle: 'short' });
+  $('#cloud-status').textContent = !ready ? '先に「Gmailから自動で取り込む」の同期用 URL を設定してください。'
+    : !conf.on ? '' : conf.error ? `⚠️ ${conf.error}`
+    : conf.dirty ? '保存待ちの変更があります…'
+    : conf.at ? `✅ 最新（${fmt(conf.at)} に${conf.device || ''}で保存）` : '準備中…';
+  const badge = $('#cloud-badge');
+  if (badge) {
+    badge.hidden = !conf.on;
+    badge.textContent = conf.error ? '☁️⚠️' : conf.dirty ? '☁️…' : '☁️';
+    badge.title = $('#cloud-status').textContent;
+  }
+}
+$('#cloud-on').addEventListener('change', e => {
+  cloudSet({ on: e.target.checked, rev: e.target.checked ? cloudConf().rev : 0, error: '' });
+  if (e.target.checked) cloudPull(true);
+  renderCloud();
+});
+$('#cloud-now').addEventListener('click', () => cloudPull(true));
+$('#cloud-backups-box').addEventListener('toggle', async e => {
+  if (!e.target.open) return;
+  const box = $('#cloud-backups');
+  box.innerHTML = '<p class="note small">読み込み中…</p>';
+  try {
+    const d = await cloudFetch('action=backups');
+    box.innerHTML = (d.backups.length ? `<ul class="backup-list">${d.backups.map(b => `<li><span>${esc(b.name.slice(7, 17))} の朝の状態 <small>${Math.round(b.size / 1024)}KB</small></span>
+      <button type="button" class="btn small" data-restore="${esc(b.name)}">この内容を読み込む</button></li>`).join('')}</ul>` : '<p class="note small">まだバックアップはありません（変更を保存した日ごとに1つ作られます）。</p>') +
+      `<p class="note small"><a href="${esc(safeUrl(d.folder))}" target="_blank" rel="noopener">Google ドライブのフォルダを開く ↗</a></p>`;
+  } catch (err) {
+    box.innerHTML = `<p class="note small">⚠️ ${esc(cloudErrText(err))}</p>`;
+  }
+});
+$('#cloud-backups').addEventListener('click', async e => {
+  const b = e.target.closest('[data-restore]');
+  if (!b) return;
+  try {
+    const d = await cloudFetch('action=load&name=' + encodeURIComponent(b.dataset.restore));
+    if (d.empty || !d.state) throw new Error('バックアップが見つかりません');
+    showImportPreview({ ...d.state, exportedAt: d.at ? new Date(d.at).toISOString() : '' }, `${b.dataset.restore.slice(7, 17)} のバックアップ`);
+  } catch (err) { alert('読み込めませんでした：' + cloudErrText(err)); }
+});
+renderCloud();
+setTimeout(() => cloudPull(false), 1200);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) cloudPull(false); else if (cloudConf().dirty) cloudPush(false); });
+window.addEventListener('online', () => cloudPull(false));
+// ダイアログを閉じたら、後回しにしていた読み込みをする
+document.addEventListener('close', () => setTimeout(() => { if (!document.querySelector('dialog[open]')) cloudPull(false); }, 300), true);
+
 /* ---------- 予定：月のカレンダー ---------- */
 const SCHED_MODE_KEY = 'syukatsu.schedMode';
 const schedMode = () => localStorage.getItem(SCHED_MODE_KEY) || 'month';
@@ -3347,19 +3589,16 @@ function statusStepper(c) {
 
 /** 詳細画面：募集要項が空のときの案内 */
 function emptyPostingCta(c) {
-  if (!gsyncConf().url) return '<p class="muted-empty">まだ入力されていません。「編集」から募集要項を貼り付けると自動で入力されます。</p>';
   return `<div class="posting-cta">
-    <p class="note">${c.site ? '採用サイトから募集要項を探して、初任給・勤務地・休日などを自動で入力できます。' : '採用サイトの URL を入れると、募集要項を探して自動で入力できます。'}</p>
-    <button class="btn primary full-w" data-act="find-posting">🔎 ${c.site ? '採用サイトから募集要項を探す' : 'URL を入れて募集要項を探す'}</button>
+    <p class="note">Claude に「入力の型」と募集要項を送り、返ってきた答えを貼り付けると、初任給・勤務地・休日などがまとめて入力されます。</p>
+    <button class="btn primary full-w" data-act="find-posting">📋 募集要項を入力する</button>
   </div>`;
 }
 function startFindPosting(c) {
   dDialog.close();
   openCompany(c.id);
-  const box = $('.paste-box');
-  box.scrollIntoView({ block: 'start' });
-  if (c.site) importPostingFromUrl('find');
-  else setTimeout(() => $('#posting-url').focus(), 100);
+  $('#posting-section').open = true;
+  $('.paste-box').scrollIntoView({ block: 'start' });
 }
 /** 詳細画面：自分のメモと、Gmail からわかった経緯を分けて表示 */
 function memoSections(c) {
@@ -3383,7 +3622,7 @@ function renderBulkBanner() {
   const el = $('#bulk-posting');
   const all = bulkTargets();
   const withSite = all.filter(c => c.site);
-  el.hidden = !all.length || !gsyncConf().url;
+  el.hidden = true; // 採用サイトから読み取る機能はやめた（Claude で整えて貼り付ける）
   if (el.hidden) return;
   el.innerHTML = `<div class="tb-text"><b>★3なのに募集要項が未入力の企業が ${all.length}社</b>
     <span>${withSite.length ? `採用サイトが分かっている ${withSite.length}社 をまとめて探し、1社ずつ確認して保存できます。` : ''}${all.length > withSite.length ? `${all.length - withSite.length}社は採用サイトの URL が未登録です（企業の編集画面で入力できます）。` : ''}</span></div>

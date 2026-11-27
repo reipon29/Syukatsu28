@@ -46,6 +46,7 @@ function setup() {
   if (!props.getProperty('token')) props.setProperty('token', Utilities.getUuid().replace(/-/g, ''));
   ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === 'syncTrigger').forEach(t => ScriptApp.deleteTrigger(t));
   ScriptApp.newTrigger('syncTrigger').timeBased().everyHours(1).create();
+  backupFolder_(); // Google ドライブにバックアップ用のフォルダを作る（許可の確認のため）
   const r = sync_(RUN_LIMIT_MS);
   console.log(`読み込み: ${r.read}通 / 企業 ${r.companies}社 / ${r.done ? '最新まで読み終わりました' : '続きは1時間ごとに自動で読みます'}`);
   showAppUrl();
@@ -80,7 +81,7 @@ function resetSync() {
 }
 
 /** アプリからの取得 */
-const SCRIPT_VERSION = 3;
+const SCRIPT_VERSION = 4;
 function doGet(e) {
   const p = (e && e.parameter) || {};
   if (p.action === 'version') return json_({ app: 'syukatsu-gas', version: SCRIPT_VERSION });
@@ -88,6 +89,11 @@ function doGet(e) {
   const token = props.getProperty('token');
   if (!token || p.token !== token) return json_({ error: 'unauthorized' });
   // Google カレンダーの予定を読む（アプリのカレンダー表示に重ねる）
+  // アプリのデータ（PC とスマホで同じデータを使う・バックアップ）
+  if (p.action === 'load' || p.action === 'backups') {
+    try { return json_(p.action === 'load' ? cloudLoad_(p.name) : listBackups_()); }
+    catch (err) { return json_({ ok: false, error: String(err && err.message || err) }); }
+  }
   if (p.action === 'gcal') {
     try { return json_(listCalendar_(p.from, p.to)); }
     catch (err) { return json_({ ok: false, error: String(err && err.message || err) }); }
@@ -638,6 +644,7 @@ function doPost(e) {
   if (!token || (p.token || body.token) !== token) return json_({ error: 'unauthorized' });
   try {
     if (body.action === 'calendar') return json_(pushCalendar_(body.events || [], body.from, body.to));
+    if (body.action === 'save') return json_(cloudSave_(body));
     return json_({ ok: false, error: 'unknown action' });
   } catch (err) {
     return json_({ ok: false, error: String(err && err.message || err) });
@@ -736,4 +743,83 @@ function listCalendar_(from, to) {
     });
   });
   return { ok: true, events: out };
+}
+
+
+/* ===================== アプリのデータの保存（PC とスマホで同じデータを使う・バックアップ） ===================== */
+// 自分の Google ドライブの「就活管理アプリのバックアップ」フォルダに保存する
+//   latest.json            … いちばん新しいデータ（変更するたびに上書き）
+//   backup-YYYY-MM-DD.json … その日の最初の変更の直前のデータ（BACKUP_KEEP 日分残す）
+const BACKUP_FOLDER = '就活管理アプリのバックアップ';
+const BACKUP_KEEP = 60;
+function backupFolder_() {
+  const props = PropertiesService.getScriptProperties();
+  const id = props.getProperty('backupFolderId');
+  if (id) {
+    try { const f = DriveApp.getFolderById(id); if (!f.isTrashed()) return f; } catch (err) { /* 消されていたら作り直す */ }
+  }
+  const folder = DriveApp.createFolder(BACKUP_FOLDER);
+  folder.setDescription('就活管理アプリのデータです。人に共有しないでください（パスワードも含まれます）。');
+  props.setProperty('backupFolderId', folder.getId());
+  return folder;
+}
+function fileIn_(folder, name) {
+  const it = folder.getFilesByName(name);
+  return it.hasNext() ? it.next() : null;
+}
+function cloudRev_() { return Number(PropertiesService.getScriptProperties().getProperty('cloudRev') || 0); }
+function cloudLoad_(name) {
+  const folder = backupFolder_();
+  if (name && !/^backup-\d{4}-\d{2}-\d{2}\.json$/.test(name)) throw new Error('バックアップの名前が正しくありません');
+  const file = fileIn_(folder, name || 'latest.json');
+  if (!file) return { ok: true, rev: cloudRev_(), empty: true };
+  const data = JSON.parse(file.getBlob().getDataAsString('UTF-8'));
+  return { ok: true, rev: name ? data.rev : cloudRev_(), at: data.at, device: data.device, state: data.state };
+}
+function cloudSave_(body) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(15000);
+  try {
+    const props = PropertiesService.getScriptProperties();
+    const rev = cloudRev_();
+    // ほかの端末が先に保存していたら、そちらのデータを返して統合してもらう
+    if (Number(body.baseRev || 0) !== rev) {
+      const cur = cloudLoad_();
+      return { ok: false, conflict: true, rev: cur.rev, at: cur.at, device: cur.device, state: cur.state };
+    }
+    if (!body.state || !Array.isArray(body.state.companies)) throw new Error('データの形が正しくありません');
+    const at = Date.now();
+    const text = JSON.stringify({ app: 'syukatsu', rev: rev + 1, at: at, device: String(body.device || ''), state: body.state });
+    const folder = backupFolder_();
+    const latest = fileIn_(folder, 'latest.json');
+    const day = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd');
+    const bname = 'backup-' + day + '.json';
+    if (!fileIn_(folder, bname)) {
+      folder.createFile(bname, latest ? latest.getBlob().getDataAsString('UTF-8') : text, 'application/json');
+      pruneBackups_(folder);
+    }
+    if (latest) latest.setContent(text);
+    else folder.createFile('latest.json', text, 'application/json');
+    props.setProperty('cloudRev', String(rev + 1));
+    return { ok: true, rev: rev + 1, at: at };
+  } finally {
+    lock.releaseLock();
+  }
+}
+function backupFiles_(folder) {
+  const out = [];
+  const it = folder.getFiles();
+  while (it.hasNext()) {
+    const f = it.next();
+    if (/^backup-\d{4}-\d{2}-\d{2}\.json$/.test(f.getName())) out.push(f);
+  }
+  return out.sort((a, b) => (a.getName() < b.getName() ? 1 : -1)); // 新しい順
+}
+function pruneBackups_(folder) {
+  backupFiles_(folder).slice(BACKUP_KEEP).forEach(f => f.setTrashed(true));
+}
+function listBackups_() {
+  const folder = backupFolder_();
+  return { ok: true, rev: cloudRev_(), folder: folder.getUrl(),
+    backups: backupFiles_(folder).map(f => ({ name: f.getName(), size: f.getSize(), updated: f.getLastUpdated().getTime() })) };
 }

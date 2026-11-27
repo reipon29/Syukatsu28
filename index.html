@@ -220,7 +220,7 @@
           <p class="note small">最初は過去8か月分を読むので、全部そろうまで数時間かかることがあります（1時間ごとに自動で続きを読みます）。同期用 URL を知っている人は企業名やマイページIDを見られるので、人に教えないでください。</p>
         </details>
       </div>
-      <div class="panel" id="clipper-panel">
+      <div class="panel" id="clipper-panel" hidden>
         <h2>📥 採用ページから取り込む（ブックマーク）</h2>
         <p class="note">募集要項・エントリー画面・マイページを開いた状態でこのブックマークを押すと、ページの文章を読み取って企業の登録画面に自動入力します。文字を選択してから押すと、選択した部分だけを読み取ります。</p>
         <label class="plain">送り方
@@ -246,9 +246,31 @@
           </select>
         </label>
       </div>
+      <div class="panel" id="ai-panel">
+        <h2>🤖 Claude 用の入力の型</h2>
+        <p class="note">Claude に「入力の型」と募集要項を送ると、このアプリに貼り付けるだけで入力できる答えを返してくれます。Claude の<b>プロジェクト</b>を作って「指示」に入力の型を入れておくと、次からは募集要項を送るだけで済みます。</p>
+        <div class="btn-col">
+          <button type="button" class="btn primary" data-ai-template>入力の型をコピー</button>
+          <button type="button" class="btn" data-ai-show>中身を見る</button>
+        </div>
+        <textarea id="ai-template-text" class="ai-template-text" rows="14" readonly hidden></textarea>
+        <p class="note small">答えの貼り付け先：企業の編集画面の「コピーした答えを貼り付け」、企業を追加の「Claude の答えを貼り付けて登録」（複数社をまとめて登録できます）、PC は一覧画面で Ctrl+V。<br>入力の型には学歴・卒業年度が入っています。設定を変えたらコピーし直してください。</p>
+      </div>
+      <div class="panel" id="cloud-panel">
+        <h2>☁️ PCとスマホで同じデータを使う</h2>
+        <p class="note">変更するたびに自分の Google ドライブ（「就活管理アプリのバックアップ」フォルダ）へ自動で保存し、もう片方の端末で開くと最新の内容になります。両方で変更したときは統合するので、どちらの変更も消えません。毎日のバックアップも60日分残ります。</p>
+        <label class="check-inline"><input id="cloud-on" type="checkbox"> この端末で使う（PC とスマホの両方でオンにする）</label>
+        <p class="note small" id="cloud-status"></p>
+        <div class="btn-col"><button id="cloud-now" type="button" class="btn">今すぐ同期</button></div>
+        <details id="cloud-backups-box" class="gsync-help">
+          <summary>バックアップから戻す</summary>
+          <div id="cloud-backups"></div>
+        </details>
+        <p class="note small">使うには「Gmailから自動で取り込む」の同期用 URL と、最新のスクリプト（v4・Google ドライブの許可）が必要です。</p>
+      </div>
       <div class="panel">
         <h2>データ</h2>
-        <p class="note">データはこの端末のブラウザ内にのみ保存されます。PCとスマホで使う場合は、片方で書き出したファイル（AirDrop・メール・iCloud Drive などで送る）をもう片方で読み込んでください。読み込むときに「追加・統合」を選べば、この端末のデータは消えません。<br>※ バックアップにはパスワードもそのまま含まれるので、人に渡したり公開しないでください。</p>
+        <p class="note">データはこの端末のブラウザ内に保存され、「PCとスマホで同じデータを使う」をオンにすると Google ドライブにも保存されます。ファイルに書き出して手元に残すこともできます。読み込むときに「追加・統合」を選べば、この端末のデータは消えません。<br>※ バックアップにはパスワードもそのまま含まれるので、人に渡したり公開しないでください。</p>
         <div class="btn-col">
           <button id="export-btn" class="btn">バックアップを書き出す</button>
           <label class="btn">バックアップを読み込む
@@ -347,31 +369,14 @@
 
         <section class="fgroup paste-box">
           <h3 class="fg-title">📋 募集要項を自動入力</h3>
-          <div class="url-import">
-            <label class="plain">採用サイト・募集要項の URL
-              <input id="posting-url" type="url" inputmode="url" autocomplete="off" placeholder="https://recruit.〇〇.co.jp/">
-            </label>
-            <div class="url-import-btns">
-              <button type="button" id="posting-find" class="btn primary">🔎 募集要項を探す</button>
-              <button type="button" id="posting-fetch" class="btn">このページを読む</button>
-            </div>
-            <p class="note small" id="posting-fetch-status"></p>
-          </div>
-          <div class="or-line"><span>または</span></div>
-          <p class="note small">採用サイトの「募集要項」をまるごとコピーして、ボタンを押すか下の欄に貼り付けると各項目に入力されます。</p>
-          <button type="button" id="paste-clipboard" class="btn primary full-w">コピーした募集要項を貼り付け</button>
+          <ol class="ai-steps note small">
+            <li><button type="button" class="link strong" data-ai-template>入力の型をコピー</button>して Claude に貼り付け、続けて募集要項（文章でもPDFでも）を送る</li>
+            <li>返ってきた答えをコピーして、下のボタンを押す（下の欄に貼り付けてもOK）</li>
+          </ol>
+          <button type="button" id="paste-clipboard" class="btn primary full-w">📋 コピーした答えを貼り付け</button>
           <p id="paste-target" class="note small paste-target" hidden></p>
-          <textarea name="p_raw" rows="2" placeholder="ここに直接貼り付けてもOK（貼った瞬間に読み取ります）"></textarea>
+          <textarea name="p_raw" rows="2" placeholder="Claude の答え、または募集要項の文章を貼り付け（貼った瞬間に入力します）"></textarea>
           <button type="button" id="parse-posting" class="btn small">もう一度読み取る</button>
-          <div class="ai-box">
-            <p class="note small"><b>うまく読み取れないときは</b>、Claude に整えてもらってから入力できます。</p>
-            <button type="button" id="ai-posting" class="btn full-w">🤖 Claude で整えてから入力</button>
-            <ol id="ai-steps" class="ai-steps note small" hidden>
-              <li>Claude への依頼文をコピーしました。</li>
-              <li><a href="https://claude.ai/new" target="_blank" rel="noopener">Claude を開く ↗</a> → 貼り付けて送信</li>
-              <li>返ってきた答え（JSON）をコピーして、ここに戻り「コピーした募集要項を貼り付け」を押す</li>
-            </ol>
-          </div>
         </section>
 
         <section class="fgroup">
@@ -402,6 +407,12 @@
           <label>企業マイページURL
             <input name="url" type="url" inputmode="url" placeholder="https://">
             <a id="open-url" class="open-url" target="_blank" rel="noopener" hidden>マイページを開く ↗</a>
+          </label>
+          <label>公式ホームページ
+            <input name="homepage" type="url" inputmode="url" placeholder="https://">
+          </label>
+          <label>採用サイト
+            <input id="posting-url" type="url" inputmode="url" autocomplete="off" placeholder="https://">
           </label>
           <div class="grid2">
             <label>ログインID
@@ -709,6 +720,10 @@
       <button type="button" class="link strong" data-close>閉じる</button>
     </div>
     <div class="dialog-body">
+      <div class="ai-quick">
+        <button type="button" id="ai-paste-new" class="btn primary full-w">📋 Claude の答えを貼り付けて登録</button>
+        <p class="note small">募集要項を Claude で整えた答えから、企業と職種をまとめて登録します（<button type="button" class="link" data-ai-template>入力の型をコピー</button>）。PC では一覧画面で Ctrl+V でも貼り付けられます。</p>
+      </div>
       <div class="seg" id="quick-mode">
         <button type="button" data-mode="one" class="on">1社ずつ</button>
         <button type="button" data-mode="many">まとめて</button>

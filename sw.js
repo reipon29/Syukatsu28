@@ -1,5 +1,5 @@
 // アプリを更新したら CACHE_VERSION を上げてください
-const CACHE_VERSION = 'syukatsu-v2.18.0';
+const CACHE_VERSION = 'syukatsu-v2.19.0';
 const ASSETS = [
   './',
   './index.html',
