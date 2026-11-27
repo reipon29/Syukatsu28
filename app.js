@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '2.15.0';
+const APP_VERSION = '2.16.0';
 const STORAGE_KEY = 'syukatsu.v1';
 
 const STATUSES = [
@@ -1903,21 +1903,78 @@ function loginActions(c) {
   }
   return items.length ? `<div class="actions">${items.join('')}</div>` : '';
 }
+/* ---- 職種カード（募集要項の表示） ---- */
+const fmtMan = v => `${(Math.round(v / 1000) / 10).toLocaleString('ja-JP')}万円`;
+// 法律で書くことになっている決まり文句（読む必要が少ない）
+const BOILERPLATE_RE = /^[（(](?:雇入れ直後|変更の範囲)[)）]/;
+/** 初任給の詳細：1行ずつ表にして、自分の学歴の行を強調 */
+function salaryRows(text) {
+  const re = DEGREES[state.profile.degree]?.re;
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+  const rows = lines.map(l => {
+    const m = l.match(/^(.*?)[\s:：]*((?:月給|月額|基本給)?\s*[\d,.]+\s*万?\s*円.*)$/);
+    return m && m[1] ? { k: m[1], v: m[2], me: re ? re.test(m[1]) : false } : { k: '', v: l, me: false };
+  });
+  if (rows.filter(r => r.k).length < 2) return `<div class="pf-text">${esc(text)}</div>`;
+  return `<div class="sal-rows">${rows.map(r => r.k
+    ? `<div class="sal-row ${r.me ? 'me' : ''}"><span>${esc(r.k)}${r.me ? '<em>あなた</em>' : ''}</span><b>${esc(r.v)}</b></div>`
+    : `<div class="sal-note">${esc(r.v)}</div>`).join('')}</div>`;
+}
+/** 勤務地から法律の決まり文句の行を除く */
+function cleanLoc(text) {
+  return (text || '').split('\n').map(l => l.trim()).filter(l => l && !BOILERPLATE_RE.test(l)).join('\n');
+}
+/** 長い文章の1行目（閉じているときに見せる） */
+function previewLine(text) {
+  const first = text.split('\n').map(l => l.trim()).find(l => l && !BOILERPLATE_RE.test(l)) || text.trim();
+  return first.length > 38 ? first.slice(0, 38) + '…' : first;
+}
 function postingCard(c, p, i, multi) {
   const tk = postingTokyo(c, p);
   const title = p.title || (multi ? postingTitle(p, i) : '募集要項');
-  const filled = METRICS.filter(m => p[m.key] != null);
-  const missing = METRICS.filter(m => p[m.key] == null && m.key !== 'hiring');
-  const metrics = filled.map(m => `<div class="kv ${m.key === 'salary' ? 'key' : ''}"><span class="kl">${m.label.replace(/（.*）/, '')}</span><span class="kvv">${esc(m.fmt(p[m.key]))}</span></div>`).join('');
-  const flags = POSTING_FLAGS.filter(f => p[f.key]).map(f => `<span class="tag">${f.label}</span>`).join('');
-  const rows = POSTING_TEXT_LABELS.filter(([k]) => p[k]).map(([k, l]) => `<dt>${l}</dt><dd>${esc(p[k])}</dd>`).join('');
+  const net = netMonthly(p);
+  const tiles = [
+    p.salary != null && { l: '初任給', v: fmtMan(p.salary), sub: `${p.salary.toLocaleString('ja-JP')}円`, key: true },
+    net != null && { l: '手取りの目安', v: fmtMan(net), sub: p.housing ? '家賃補助込み' : '額面の約8割' },
+    p.holidays != null && { l: '年間休日', v: `${p.holidays}日` },
+    p.housing != null && { l: '住宅補助', v: fmtMan(p.housing), sub: '月額' },
+    p.annual != null && { l: '想定年収', v: `${p.annual.toLocaleString('ja-JP')}万円` },
+    p.bonus != null && { l: '賞与', v: `${p.bonus}ヶ月` },
+    p.overtime != null && { l: '月平均残業', v: `${p.overtime}時間` },
+    p.hiring != null && { l: '採用予定', v: `${p.hiring.toLocaleString('ja-JP')}人` },
+  ].filter(Boolean);
+  const hl = housingLevel(c, p);
+  const chips = [
+    ...POSTING_FLAGS.filter(f => p[f.key]).map(f => `<span class="pchip">${f.label}</span>`),
+    !p.housing && hl === 'yes' ? '<span class="pchip good">🏠 家賃補助・社宅あり</span>' : '',
+    hl === 'dorm' ? '<span class="pchip">🏠 寮のみ</span>' : '',
+  ].join('');
+  // 出典の URL は「その他」から取り出してリンクにする
+  const src = (p.note.match(/出典:\s*(https?:\/\/\S+)/) || [])[1];
+  const note = p.note.replace(/^出典:\s*https?:\/\/\S+\s*$/m, '').trim();
+  const loc = cleanLoc(p.location);
+  const quick = [
+    loc && ['📍', '勤務地', loc],
+    p.job && ['💼', '仕事内容', p.job],
+  ].filter(Boolean);
+  const fields = POSTING_TEXT_LABELS.filter(([k]) => k !== 'note' && k !== 'job' && p[k]).map(([k, l]) => [k, l, p[k]]);
+  if (note) fields.push(['note', 'その他', note]);
   return `<div class="pcard" data-pid="${p.id}">
-    <div class="pcard-top"><span class="pcard-title">${esc(title)}</span>${p.prevYear ? '<span class="prev-pill">前年度の情報</span>' : ''}${p.applied ? '<span class="applied-pill">応募</span>' : ''}${tokyoBadgeCode(tk)}</div>
-    ${p.location ? `<div class="note small">📍 ${esc(p.location)}</div>` : ''}
-    ${metrics ? `<div class="kv-grid">${metrics}</div>` : ''}
-    ${missing.length ? `<div class="kv-missing">未入力: ${missing.map(m => m.label.replace(/（.*）/, '')).join('・')}</div>` : ''}
-    ${flags ? `<div>${flags}</div>` : ''}
-    ${rows ? `<details><summary>募集要項の詳細を見る</summary><dl class="dl">${rows}</dl></details>` : ''}
+    <div class="pcard-top">
+      <span class="pcard-title">${esc(title)}</span>
+      ${p.applied ? '<span class="applied-pill">応募</span>' : ''}
+      ${p.prevYear ? `<span class="prev-pill" title="前年度の募集要項の内容です">${String(state.profile.gradYear - 1).slice(2)}卒向け（前年度）</span>` : ''}
+      ${tokyoBadgeCode(tk)}
+    </div>
+    ${tiles.length ? `<div class="ptiles">${tiles.map(t => `<div class="ptile ${t.key ? 'key' : ''}"><span class="pt-l">${t.l}</span><b class="pt-v">${esc(t.v)}</b>${t.sub ? `<span class="pt-s">${esc(t.sub)}</span>` : ''}</div>`).join('')}</div>` : ''}
+    ${chips ? `<div class="pchips">${chips}</div>` : ''}
+    ${quick.length ? `<div class="pquick">${quick.map(([ico, l, v]) => `<div class="pq"><span class="pq-i" aria-hidden="true">${ico}</span><span class="pq-l">${l}</span><span class="pq-v">${esc(v)}</span></div>`).join('')}</div>` : ''}
+    ${fields.length ? `<div class="pfields">${fields.map(([k, l, v]) => `
+      <details class="pfield">
+        <summary><span class="pf-l">${l}</span><span class="pf-p">${esc(previewLine(v))}</span></summary>
+        ${k === 'salaryNote' ? salaryRows(v) : `<div class="pf-text">${esc(v)}</div>`}
+      </details>`).join('')}</div>` : ''}
+    ${src ? `<a class="psrc" href="${esc(src)}" target="_blank" rel="noopener">📄 募集要項のページを開く ↗</a>` : ''}
   </div>`;
 }
 function renderDetail() {
@@ -1974,11 +2031,11 @@ function renderDetail() {
         : emptyPostingCta(c)}
     </section>
 
-    ${c.hq || c.locations ? `<section class="dsec">
+    ${c.hq || cleanLoc(c.locations) ? `<section class="dsec">
       <div class="dsec-head"><h3>勤務地</h3>${tk ? `<span class="note small">${tk.label}</span>` : ''}</div>
       <dl class="dl">
         ${c.hq ? `<dt>本社</dt><dd>${esc(c.hq)}</dd>` : ''}
-        ${c.locations ? `<dt>勤務地</dt><dd>${esc(c.locations)}</dd>` : ''}
+        ${cleanLoc(c.locations) ? `<dt>勤務地</dt><dd>${esc(cleanLoc(c.locations))}</dd>` : ''}
       </dl>
     </section>` : ''}
 

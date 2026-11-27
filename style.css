@@ -880,3 +880,41 @@ dialog > *, dialog form > * { min-width: 0; max-width: 100%; }
 @media (min-width: 900px) { .mday { min-height: 92px; } .mchip { font-size: 11px; } }
 .dot.on.auto { background: var(--accent); opacity: .45; border-color: var(--accent); }
 .auto-tag { display: inline-block; font-size: 10px; font-weight: 700; color: var(--accent); background: var(--accent-soft); border-radius: 4px; padding: 0 5px; margin-right: 4px; }
+
+/* ============ 職種カード（v2.16） ============ */
+.pcard { padding: 14px; border-radius: 16px; display: grid; gap: 12px; }
+.pcard-title { font-size: 16px; }
+.ptiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.ptile { background: var(--surface-2); border-radius: 12px; padding: 10px 12px; display: grid; gap: 1px; min-width: 0; }
+.ptile.key { background: var(--accent-soft); }
+.pt-l { font-size: 11.5px; color: var(--muted); font-weight: 700; }
+.pt-v { font-size: 20px; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1.25; }
+.ptile.key .pt-v { color: var(--accent); }
+.pt-s { font-size: 11px; color: var(--muted); }
+.pchips { display: flex; flex-wrap: wrap; gap: 6px; }
+.pchip { font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 999px; background: var(--surface-2); color: var(--text); }
+.pchip.good { background: var(--green-soft); color: var(--green); }
+.pquick { display: grid; gap: 8px; }
+.pq { display: grid; grid-template-columns: 1.4em 4.6em minmax(0, 1fr); gap: 6px; align-items: baseline; font-size: 14px; }
+.pq-l { font-size: 12px; color: var(--muted); font-weight: 700; }
+.pq-v { white-space: pre-wrap; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.pfields { border-top: 1px solid var(--border); }
+.pfield { border-bottom: 1px solid var(--border); margin: 0 !important; }
+.pfield summary { display: grid; grid-template-columns: 6em minmax(0, 1fr) 1em; gap: 8px; align-items: baseline; padding: 10px 0; cursor: pointer; list-style: none; color: var(--text) !important; font-weight: 400 !important; }
+.pfield summary::-webkit-details-marker { display: none; }
+.pfield summary::after { content: '›'; color: var(--muted); font-size: 16px; transition: transform .15s; justify-self: end; }
+.pfield[open] summary::after { transform: rotate(90deg); }
+.pf-l { font-size: 12.5px; color: var(--muted); font-weight: 700; }
+.pf-p { font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pfield[open] .pf-p { visibility: hidden; }
+.pf-text { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; line-height: 1.7; padding: 0 0 12px; }
+.sal-rows { display: grid; gap: 4px; padding: 0 0 12px; }
+.sal-row { display: flex; justify-content: space-between; gap: 10px; padding: 6px 10px; border-radius: 8px; font-size: 14px; }
+.sal-row b { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.sal-row.me { background: var(--accent-soft); }
+.sal-row.me b { color: var(--accent); }
+.sal-row em { font-style: normal; font-size: 10px; font-weight: 800; color: #fff; background: var(--accent); border-radius: 4px; padding: 1px 5px; margin-left: 6px; vertical-align: 1px; }
+.sal-note { font-size: 12px; color: var(--muted); padding: 2px 10px; }
+.psrc { font-size: 13px; font-weight: 600; color: var(--accent); text-decoration: none; }
+.pcard-top { row-gap: 6px; }
+.pcard-top .pcard-title { flex-basis: 100%; }
